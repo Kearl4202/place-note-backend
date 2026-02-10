@@ -1,0 +1,38 @@
+{
+  "name": "place-note-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Place Note",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "@supabase/supabase-js": "^2.39.0",
+    "dotenv": "^16.3.1",
+    "bcrypt": "^5.1.1",
+    "jsonwebtoken": "^9.0.2",
+    "expo-server-sdk": "^3.7.0"
+  }
+}
+```
+
+6. **Save** (Ctrl + S)
+7. **Close** Notepad
+
+---
+
+### **File 2: .env**
+
+1. Right-click → **New** → **Text Document**
+2. Name it: `.env` (just dot env, no .txt!)
+3. Open with Notepad
+4. Paste this (use YOUR credentials from earlier):
+```
+SUPABASE_URL=https://wukgsfhbgxhqcxuftvtr.supabase.co
+SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind1a2dzZmhiZ3hocWN4dWZ0dnRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA2Njg1ODUsImV4cCI6MjA4NjI0NDU4NX0.EgNEWxrLoy4VH00fyxUdDvrYLrSni50ENCpSX19bLU4
+JWT_SECRET=place-note-secret-key-random-string-12345
+PORT=3000
+NODE_ENV=development
