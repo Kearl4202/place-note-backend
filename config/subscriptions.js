@@ -1,105 +1,112 @@
+const { supabase } = require('./database');
+
 const SUBSCRIPTION_TIERS = {
-  viewer: {
+  'The Viewer': {
     name: 'The Viewer',
-    price_monthly: 0,
-    price_yearly: 0,
+    level: 0,
+    description: 'Free tier with basic features',
+    features: ['View place notes', 'Basic notifications', 'Limited contacts'],
     limits: {
-      place_notes: 5,
+      notes: 5,
       contacts: 3,
       groups: 0,
-      projects: 0,
-    },
-    features: {
-      basic_notifications: true,
-      groups: false,
-      projects: false,
-      chat: true,
-      unlimited_contacts: false,
-    },
-    description: 'Free plan with basic features'
+      projects: 0
+    }
   },
-  
-  notifier: {
+  'The Notifier': {
     name: 'The Notifier',
-    price_monthly: 1200,
-    price_yearly: 9900,
+    level: 1,
+    description: 'Enhanced notifications and contacts',
+    features: ['Unlimited place notes', 'Advanced notifications', 'More contacts'],
     limits: {
-      place_notes: 25,
-      contacts: 25,
-      groups: 5,
-      projects: 0,
-    },
-    features: {
-      basic_notifications: true,
-      groups: true,
-      projects: false,
-      chat: true,
-      unlimited_contacts: false,
-    },
-    description: 'For individuals who need groups and more capacity'
+      notes: 999999,
+      contacts: 10,
+      groups: 0,
+      projects: 0
+    }
   },
-  
-  inspector: {
+  'The Inspector': {
     name: 'The Inspector',
-    price_monthly: 2500,
-    price_yearly: 25000,
+    level: 2,
+    description: 'Group features unlocked',
+    features: ['Everything in Notifier', 'Create groups', 'Share notes'],
     limits: {
-      place_notes: 50,
+      notes: 999999,
       contacts: 50,
-      groups: -1,
-      projects: 2,
-    },
-    features: {
-      basic_notifications: true,
-      groups: true,
-      projects: true,
-      chat: true,
-      unlimited_contacts: false,
-      unlimited_groups: true,
-    },
-    description: 'For teams managing multiple projects'
+      groups: 5,
+      projects: 0
+    }
   },
-  
-  chief: {
+  'The Chief': {
     name: 'The Chief',
-    price_monthly: 9900,
-    price_yearly: 99000,
-    price_per_contact_monthly: 100,
-    price_per_contact_yearly: 1000,
+    level: 3,
+    description: 'Full access to all features',
+    features: ['Everything in Inspector', 'Unlimited projects', 'Priority support'],
     limits: {
-      place_notes: -1,
-      contacts: -1,
-      groups: -1,
-      projects: -1,
-    },
-    features: {
-      basic_notifications: true,
-      groups: true,
-      projects: true,
-      chat: true,
-      unlimited_contacts: true,
-      unlimited_groups: true,
-      unlimited_projects: true,
-      priority_support: true,
-    },
-    description: 'Enterprise plan for large teams'
+      notes: 999999,
+      contacts: 999999,
+      groups: 999999,
+      projects: 999999
+    }
   }
 };
 
-function getUserLimits(userTier, chiefContactLimit = 0) {
-  const tier = SUBSCRIPTION_TIERS[userTier];
-  
-  if (userTier === 'chief') {
+// Get user's subscription info with usage stats
+async function getUserSubscriptionInfo(userId) {
+  try {
+    // Get user's subscription tier
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('subscription_tier, email, name')
+      .eq('id', userId)
+      .single();
+
+    if (userError) throw userError;
+
+    const tier = SUBSCRIPTION_TIERS[user.subscription_tier] || SUBSCRIPTION_TIERS['The Viewer'];
+
+    // Get usage counts
+    const { count: notesCount } = await supabase
+      .from('place_notes')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    const { count: contactsCount } = await supabase
+      .from('contacts')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    const { count: groupsCount } = await supabase
+      .from('groups')
+      .select('*', { count: 'exact', head: true })
+      .eq('created_by', userId);
+
+    const { count: projectsCount } = await supabase
+      .from('projects')
+      .select('*', { count: 'exact', head: true })
+      .eq('created_by', userId);
+
     return {
-      place_notes: -1,
-      contacts: chiefContactLimit,
-      groups: -1,
-      projects: -1,
+      user: {
+        email: user.email,
+        name: user.name
+      },
+      tier: tier,
+      limits: tier.limits,
+      usage: {
+        notes: notesCount || 0,
+        contacts: contactsCount || 0,
+        groups: groupsCount || 0,
+        projects: projectsCount || 0
+      }
     };
+
+  } catch (error) {
+    console.error('Error getting subscription info:', error);
+    throw error;
   }
-  
-  return tier.limits;
 }
+
 // Check if user can create more of a resource type
 async function checkSubscriptionLimit(userId, resourceType) {
   try {
@@ -150,8 +157,9 @@ async function checkSubscriptionLimit(userId, resourceType) {
     return { allowed: false, limit: 0, current: 0 };
   }
 }
+
 module.exports = {
   SUBSCRIPTION_TIERS,
   getUserSubscriptionInfo,
-  checkSubscriptionLimit  // ← ADD THIS LINE
+  checkSubscriptionLimit
 };
