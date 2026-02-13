@@ -11,10 +11,12 @@ app.use(express.json());
 // Import routes
 const authRoutes = require('./routes/auth');
 const subscriptionRoutes = require('./routes/subscriptions');
+const placeNoteRoutes = require('./routes/place-notes');
 
 // Use routes
 app.use('/api/auth', authRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
+app.use('/api/place-notes', placeNoteRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
