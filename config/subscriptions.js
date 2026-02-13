@@ -100,8 +100,58 @@ function getUserLimits(userTier, chiefContactLimit = 0) {
   
   return tier.limits;
 }
+// Check if user can create more of a resource type
+async function checkSubscriptionLimit(userId, resourceType) {
+  try {
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('subscription_tier')
+      .eq('id', userId)
+      .single();
 
+    if (error) throw error;
+
+    const tier = SUBSCRIPTION_TIERS[user.subscription_tier] || SUBSCRIPTION_TIERS['The Viewer'];
+    const limit = tier.limits[resourceType];
+
+    // Count current usage
+    let tableName;
+    switch(resourceType) {
+      case 'notes':
+        tableName = 'place_notes';
+        break;
+      case 'contacts':
+        tableName = 'contacts';
+        break;
+      case 'groups':
+        tableName = 'groups';
+        break;
+      case 'projects':
+        tableName = 'projects';
+        break;
+      default:
+        return { allowed: false, limit: 0, current: 0 };
+    }
+
+    const { count, error: countError } = await supabase
+      .from(tableName)
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    if (countError) throw countError;
+
+    const current = count || 0;
+    const allowed = current < limit;
+
+    return { allowed, limit, current };
+
+  } catch (error) {
+    console.error('Error checking subscription limit:', error);
+    return { allowed: false, limit: 0, current: 0 };
+  }
+}
 module.exports = {
   SUBSCRIPTION_TIERS,
-  getUserLimits
+  getUserSubscriptionInfo,
+  checkSubscriptionLimit  // ← ADD THIS LINE
 };
