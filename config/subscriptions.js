@@ -140,10 +140,15 @@ async function checkSubscriptionLimit(userId, resourceType) {
         return { allowed: false, limit: 0, current: 0 };
     }
 
-    const { count, error: countError } = await supabase
-      .from(tableName)
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId);
+    let column = 'user_id';
+if (resourceType === 'groups' || resourceType === 'projects') {
+  column = 'created_by';
+}
+
+const { count, error: countError } = await supabase
+  .from(tableName)
+  .select('*', { count: 'exact', head: true })
+  .eq(column, userId);
 
     if (countError) throw countError;
 
