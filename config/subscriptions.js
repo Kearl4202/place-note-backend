@@ -101,7 +101,6 @@ async function getUserSubscriptionInfo(userId) {
       }
     };
 
-  };
   } catch (error) {
     console.error('Error getting subscription info:', error);
     throw error;
@@ -163,7 +162,7 @@ const { count, error: countError } = await supabase
     console.error('Error details:', error.message, error.code);
     return { allowed: false, limit: 0, current: 0 };
   }
-
+}
 module.exports = {
   SUBSCRIPTION_TIERS,
   getUserSubscriptionInfo,
