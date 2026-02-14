@@ -102,9 +102,10 @@ async function getUserSubscriptionInfo(userId) {
     };
 
   } catch (error) {
-    console.error('Error getting subscription info:', error);
-    throw error;
-  }
+  console.error('Error checking subscription limit:', error);
+  console.error('Error details:', error.message, error.code);
+  return { allowed: false, limit: 0, current: 0 };
+}
 }
 
 // Check if user can create more of a resource type
