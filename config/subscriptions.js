@@ -101,11 +101,11 @@ async function getUserSubscriptionInfo(userId) {
       }
     };
 
+  };
   } catch (error) {
-  console.error('Error checking subscription limit:', error);
-  console.error('Error details:', error.message, error.code);
-  return { allowed: false, limit: 0, current: 0 };
-}
+    console.error('Error getting subscription info:', error);
+    throw error;
+  }
 }
 
 // Check if user can create more of a resource type
@@ -160,9 +160,9 @@ const { count, error: countError } = await supabase
 
   } catch (error) {
     console.error('Error checking subscription limit:', error);
+    console.error('Error details:', error.message, error.code);
     return { allowed: false, limit: 0, current: 0 };
   }
-}
 
 module.exports = {
   SUBSCRIPTION_TIERS,
