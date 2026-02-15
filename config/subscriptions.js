@@ -101,9 +101,15 @@ async function getUserSubscriptionInfo(userId) {
       }
     };
 
-  } catch (error) {
-    console.error('Error getting subscription info:', error);
-    throw error;
+ } catch (error) {
+    console.error('=== SUBSCRIPTION LIMIT ERROR ===');
+    console.error('Error:', error);
+    console.error('Error message:', error.message);
+    console.error('Error code:', error.code);
+    console.error('Error details:', JSON.stringify(error, null, 2));
+    console.error('User ID:', userId);
+    console.error('Resource type:', resourceType);
+    return { allowed: false, limit: 0, current: 0 };
   }
 }
 
