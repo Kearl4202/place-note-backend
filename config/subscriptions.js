@@ -69,12 +69,12 @@ async function getUserSubscriptionInfo(userId) {
     const { count: notesCount } = await supabase
       .from('place_notes')
       .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId);
+      .eq('creator_id', userId);
 
     const { count: contactsCount } = await supabase
       .from('contacts')
       .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId);
+      .eq('creator_id', userId);
 
     const { count: groupsCount } = await supabase
       .from('groups')
@@ -153,7 +153,7 @@ async function checkSubscriptionLimit(userId, resourceType) {
         return { allowed: false, limit: 0, current: 0 };
     }
 
-    let column = 'user_id';
+    let column = 'creator_id';
 if (resourceType === 'groups' || resourceType === 'projects') {
   column = 'created_by';
 }
