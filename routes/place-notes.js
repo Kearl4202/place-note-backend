@@ -30,9 +30,7 @@ router.post('/', authenticateToken, async (req, res) => {
         latitude,
         longitude,
         perimeter_feet: perimeter_feet || 500,
-        trigger_on_entry: trigger_on_entry !== false,
-        trigger_on_exit: trigger_on_exit || false,
-        is_active: is_active !== false,
+        status: 'active',
       }])
       .select()
       .single();
