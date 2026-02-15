@@ -1,7 +1,7 @@
 const { supabase } = require('./database');
 
 const SUBSCRIPTION_TIERS = {
-  'The Viewer': {
+  'viewer': {
     name: 'The Viewer',
     level: 0,
     description: 'Free tier with basic features',
@@ -13,7 +13,7 @@ const SUBSCRIPTION_TIERS = {
       projects: 0
     }
   },
-  'The Notifier': {
+  'notifier': {
     name: 'The Notifier',
     level: 1,
     description: 'Enhanced notifications and contacts',
@@ -25,7 +25,7 @@ const SUBSCRIPTION_TIERS = {
       projects: 0
     }
   },
-  'The Inspector': {
+  'inspector': {
     name: 'The Inspector',
     level: 2,
     description: 'Group features unlocked',
@@ -37,7 +37,7 @@ const SUBSCRIPTION_TIERS = {
       projects: 0
     }
   },
-  'The Chief': {
+  'chief': {
     name: 'The Chief',
     level: 3,
     description: 'Full access to all features',
@@ -63,7 +63,7 @@ async function getUserSubscriptionInfo(userId) {
 
     if (userError) throw userError;
 
-    const tier = SUBSCRIPTION_TIERS[user.subscription_tier] || SUBSCRIPTION_TIERS['The Viewer'];
+    const tier = SUBSCRIPTION_TIERS[user.subscription_tier] || SUBSCRIPTION_TIERS['viewer'];
 
     // Get usage counts
     const { count: notesCount } = await supabase
