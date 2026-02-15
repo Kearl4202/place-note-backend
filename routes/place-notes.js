@@ -10,15 +10,15 @@ router.post('/', authenticateToken, async (req, res) => {
     const { name, description, latitude, longitude, perimeter_feet, trigger_on_entry, trigger_on_exit, is_active } = req.body;
     const userId = req.user.userId;
 
-    // Check subscription limits
-    const limitCheck = await checkSubscriptionLimit(userId, 'notes');
-    if (!limitCheck.allowed) {
-      return res.status(403).json({ 
-        error: `You've reached your limit of ${limitCheck.limit} place notes. Upgrade to add more!`,
-        limit: limitCheck.limit,
-        current: limitCheck.current
-      });
-    }
+    // // Check subscription limits
+    // const limitCheck = await checkSubscriptionLimit(userId, 'notes');
+    // if (!limitCheck.allowed) {
+    //   return res.status(403).json({ 
+    //     error: `You've reached your limit of ${limitCheck.limit} place notes. Upgrade to add more!`,
+    //     limit: limitCheck.limit,
+    //     current: limitCheck.current
+    //   });
+    // }
 
     // Create the place note
     const { data, error } = await supabase
