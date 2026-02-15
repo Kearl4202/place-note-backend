@@ -116,11 +116,18 @@ async function getUserSubscriptionInfo(userId) {
 // Check if user can create more of a resource type
 async function checkSubscriptionLimit(userId, resourceType) {
   try {
+    console.log('=== CHECKING LIMIT ===');
+    console.log('User ID:', userId);
+    console.log('Resource type:', resourceType);
+    
     const { data: user, error } = await supabase
       .from('users')
       .select('subscription_tier')
       .eq('id', userId)
       .single();
+
+    console.log('User data:', user);
+    console.log('Error:', error);
 
     if (error) throw error;
 
