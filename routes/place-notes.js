@@ -58,7 +58,7 @@ router.get('/', authenticateToken, async (req, res) => {
     const { data, error } = await supabase
       .from('place_notes')
       .select('*')
-      .eq('user_id', userId)
+      .eq('creator_id', userId)
       .order('created_at', { ascending: false });
 
     if (error) throw error;
