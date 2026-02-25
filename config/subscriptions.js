@@ -63,7 +63,14 @@ async function getUserSubscriptionInfo(userId) {
 
     if (userError) throw userError;
 
-    const tier = SUBSCRIPTION_TIERS[user.subscription_tier] || SUBSCRIPTION_TIERS['The Viewer'];
+    const TIER_ALIASES: any = {
+  'viewer': 'The Viewer',
+  'notifier': 'The Notifier', 
+  'inspector': 'The Inspector',
+  'chief': 'The Chief',
+};
+const tierKey = TIER_ALIASES[user.subscription_tier?.toLowerCase()] || user.subscription_tier;
+const tier = SUBSCRIPTION_TIERS[tierKey] || SUBSCRIPTION_TIERS['The Viewer'];
 
     // Get usage counts
     const { count: notesCount } = await supabase
