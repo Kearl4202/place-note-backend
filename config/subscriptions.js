@@ -8,7 +8,7 @@ const SUBSCRIPTION_TIERS = {
     features: ['View place notes', 'Basic notifications', 'Limited contacts'],
     limits: {
       notes: 5,
-      contacts: 3,
+      contacts: 5,
       groups: 0,
       projects: 0
     }
@@ -19,9 +19,9 @@ const SUBSCRIPTION_TIERS = {
     description: 'Enhanced notifications and contacts',
     features: ['Unlimited place notes', 'Advanced notifications', 'More contacts'],
     limits: {
-      notes: 999999,
-      contacts: 10,
-      groups: 0,
+      notes: 10,
+      contacts: 20,
+      groups: 2,
       projects: 0
     }
   },
@@ -31,10 +31,10 @@ const SUBSCRIPTION_TIERS = {
     description: 'Group features unlocked',
     features: ['Everything in Notifier', 'Create groups', 'Share notes'],
     limits: {
-      notes: 999999,
+      notes: 20,
       contacts: 50,
       groups: 5,
-      projects: 0
+      projects: 2
     }
   },
   'The Chief': {
@@ -43,10 +43,10 @@ const SUBSCRIPTION_TIERS = {
     description: 'Full access to all features',
     features: ['Everything in Inspector', 'Unlimited projects', 'Priority support'],
     limits: {
-      notes: 999999,
-      contacts: 999999,
-      groups: 999999,
-      projects: 999999
+      notes: 500,
+      contacts: 500,
+      groups: 50,
+      projects: 20
     }
   }
 };
