@@ -63,7 +63,7 @@ async function getUserSubscriptionInfo(userId) {
 
     if (userError) throw userError;
 
-    const TIER_ALIASES: any = {
+    const TIER_ALIASES = {
   'viewer': 'The Viewer',
   'notifier': 'The Notifier', 
   'inspector': 'The Inspector',
