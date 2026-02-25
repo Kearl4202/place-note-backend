@@ -224,6 +224,14 @@ router.put('/:id/restore', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const noteId = req.params.id;
+
+    const limitCheck = await checkSubscriptionLimit(userId, 'notes');
+    if (!limitCheck.allowed) {
+      return res.status(403).json({ 
+        error: `You have reached your limit of ${limitCheck.limit} active place notes. Archive or delete a note before restoring.`
+      });
+    }
+
     const { data, error } = await supabase
       .from('place_notes')
       .update({ status: 'active' })
