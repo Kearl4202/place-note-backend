@@ -131,7 +131,14 @@ async function checkSubscriptionLimit(userId, resourceType) {
 
     if (error) throw error;
 
-    const tier = SUBSCRIPTION_TIERS[user.subscription_tier] || SUBSCRIPTION_TIERS['The Viewer'];
+    const TIER_ALIASES = {
+  'viewer': 'The Viewer',
+  'notifier': 'The Notifier',
+  'inspector': 'The Inspector',
+  'chief': 'The Chief',
+};
+const tierKey = TIER_ALIASES[user.subscription_tier?.toLowerCase()] || user.subscription_tier;
+const tier = SUBSCRIPTION_TIERS[tierKey] || SUBSCRIPTION_TIERS['The Viewer'];
     const limit = tier.limits[resourceType];
 
     // Count current usage
