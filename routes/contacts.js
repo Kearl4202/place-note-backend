@@ -107,25 +107,32 @@ router.post('/', authenticateToken, async (req, res) => {
     if (error) throw error;
 
     // Send push notification if contact_user_id provided (user found via search)
+    console.log('🔔 Checking push notification for contact_user_id:', contact_user_id);
     if (contact_user_id) {
       const { data: addedUser } = await supabase
         .from('users')
         .select('push_token')
         .eq('id', contact_user_id)
         .single();
+      console.log('🔔 Added user push token:', addedUser?.push_token);
       const { data: requestingUser } = await supabase
         .from('users')
         .select('name')
         .eq('id', userId)
         .single();
+      console.log('🔔 Requesting user name:', requestingUser?.name);
       if (addedUser?.push_token) {
+        console.log('🔔 Sending push notification...');
         await sendPushNotification(
           addedUser.push_token,
           'New Contact Request',
           `${requestingUser.name} wants to add you as a contact`
         );
+        console.log('🔔 Push notification sent!');
+      } else {
+        console.log('🔔 No push token found, skipping notification');
       }
-    }
+    }}
 
     res.status(201).json({ 
       message: 'Contact created successfully',
