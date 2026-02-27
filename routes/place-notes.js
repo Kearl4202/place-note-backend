@@ -3,6 +3,92 @@ const router = express.Router();
 const { supabase } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const { checkSubscriptionLimit } = require('../config/subscriptions');
+const axios = require('axios');
+
+const sendPushNotification = async (pushToken, title, body) => {
+  try {
+    await axios.post('https://exp.host/--/api/v2/push/send', {
+      to: pushToken,
+      title,
+      body,
+      sound: 'default',
+    });
+  } catch (error) {
+    console.error('🔔 Error sending push notification:', error.message);
+  }
+};
+
+// Notify assigned users about a place note
+const notifyAssignedUsers = async (noteId, noteName, creatorId) => {
+  try {
+    // Get creator name
+    const { data: creator } = await supabase
+      .from('users')
+      .select('name')
+      .eq('id', creatorId)
+      .single();
+    const creatorName = creator?.name || 'Someone';
+
+    // Get all assignments for this note
+    const { data: assignments } = await supabase
+      .from('assignments')
+      .select('user_id, group_id')
+      .eq('place_note_id', noteId);
+
+    const userIdsToNotify = new Set();
+
+    for (const a of assignments || []) {
+      if (a.user_id) {
+        // Individual contact — get their contact_user_id
+        const { data: contact } = await supabase
+          .from('contacts')
+          .select('contact_user_id')
+          .eq('id', a.user_id)
+          .eq('status', 'active')
+          .single();
+        if (contact?.contact_user_id) {
+          userIdsToNotify.add(contact.contact_user_id);
+        }
+      }
+      if (a.group_id) {
+        // Group — get all member contact_user_ids
+        const { data: members } = await supabase
+          .from('contact_groups')
+          .select('contact_id, contacts!inner(contact_user_id, status)')
+          .eq('group_id', a.group_id)
+          .eq('contacts.status', 'active');
+        for (const member of members || []) {
+          if (member.contacts?.contact_user_id) {
+            userIdsToNotify.add(member.contacts.contact_user_id);
+          }
+        }
+      }
+    }
+
+    // Don't notify the creator
+    userIdsToNotify.delete(creatorId);
+
+    console.log('📍 Notifying', userIdsToNotify.size, 'users about place note:', noteName);
+
+    // Get push tokens and send notifications
+    for (const userId of userIdsToNotify) {
+      const { data: user } = await supabase
+        .from('users')
+        .select('push_token')
+        .eq('id', userId)
+        .single();
+      if (user?.push_token) {
+        await sendPushNotification(
+          user.push_token,
+          'New Place Note Assignment',
+          `${creatorName} assigned you to "${noteName}"`
+        );
+      }
+    }
+  } catch (error) {
+    console.error('Error notifying assigned users:', error);
+  }
+};
 
 // Create a new place note
 router.post('/', authenticateToken, async (req, res) => {
@@ -54,6 +140,11 @@ router.post('/', authenticateToken, async (req, res) => {
       await supabase.from('assignments').insert(groupAssignments);
     }
 
+    // Notify assigned users
+    if ((assigned_contacts && assigned_contacts.length > 0) || (assigned_groups && assigned_groups.length > 0)) {
+      await notifyAssignedUsers(data.id, data.name, userId);
+    }
+
     res.status(201).json({ message: 'Place note created successfully', placeNote: data });
   } catch (error) {
     console.error('Error creating place note:', error);
@@ -61,7 +152,7 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Get all place notes for the authenticated user
+// Get all place notes for the authenticated user (ones I created)
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -75,6 +166,74 @@ router.get('/', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error fetching place notes:', error);
     res.status(500).json({ error: 'Failed to fetch place notes' });
+  }
+});
+
+// Get place notes assigned TO the current user
+router.get('/assigned-to-me', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    console.log('📍 Fetching assigned notes for user:', userId);
+
+    // Find my contact IDs (where I am the contact_user_id)
+    const { data: myContactRecords } = await supabase
+      .from('contacts')
+      .select('id')
+      .eq('contact_user_id', userId)
+      .eq('status', 'active');
+
+    const myContactIds = (myContactRecords || []).map(c => c.id);
+
+    // Find groups I'm a member of (through my contact records)
+    const { data: myGroupMemberships } = await supabase
+      .from('contact_groups')
+      .select('group_id')
+      .in('contact_id', myContactIds.length > 0 ? myContactIds : ['none']);
+
+    const myGroupIds = (myGroupMemberships || []).map(m => m.group_id);
+
+    // Find assignments where I'm directly assigned or in a group
+    let assignedNoteIds = new Set();
+
+    if (myContactIds.length > 0) {
+      const { data: directAssignments } = await supabase
+        .from('assignments')
+        .select('place_note_id')
+        .in('user_id', myContactIds);
+      for (const a of directAssignments || []) {
+        assignedNoteIds.add(a.place_note_id);
+      }
+    }
+
+    if (myGroupIds.length > 0) {
+      const { data: groupAssignments } = await supabase
+        .from('assignments')
+        .select('place_note_id')
+        .in('group_id', myGroupIds);
+      for (const a of groupAssignments || []) {
+        assignedNoteIds.add(a.place_note_id);
+      }
+    }
+
+    if (assignedNoteIds.size === 0) {
+      return res.json({ placeNotes: [] });
+    }
+
+    // Fetch the actual place notes
+    const { data: notes, error } = await supabase
+      .from('place_notes')
+      .select(`*, users!place_notes_creator_id_fkey (name)`)
+      .in('id', Array.from(assignedNoteIds))
+      .eq('status', 'active')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    console.log('📍 Found', (notes || []).length, 'assigned notes');
+    res.json({ placeNotes: notes || [] });
+  } catch (error) {
+    console.error('Error fetching assigned notes:', error);
+    res.status(500).json({ error: 'Failed to fetch assigned notes' });
   }
 });
 
@@ -301,6 +460,11 @@ router.put('/:id/assignments', authenticateToken, async (req, res) => {
         group_id: groupId,
       }));
       await supabase.from('assignments').insert(groupAssignments);
+    }
+
+    // Notify newly assigned users
+    if ((contact_ids && contact_ids.length > 0) || (group_ids && group_ids.length > 0)) {
+      await notifyAssignedUsers(noteId, note.name, userId);
     }
 
     res.json({ message: 'Assignments updated successfully' });
