@@ -54,7 +54,6 @@ const SUBSCRIPTION_TIERS = {
 // Get user's subscription info with usage stats
 async function getUserSubscriptionInfo(userId) {
   try {
-    // Get user's subscription tier
     const { data: user, error: userError } = await supabase
       .from('users')
       .select('subscription_tier, email, name')
@@ -64,24 +63,25 @@ async function getUserSubscriptionInfo(userId) {
     if (userError) throw userError;
 
     const TIER_ALIASES = {
-  'viewer': 'The Viewer',
-  'notifier': 'The Notifier', 
-  'inspector': 'The Inspector',
-  'chief': 'The Chief',
-};
-const tierKey = TIER_ALIASES[user.subscription_tier?.toLowerCase()] || user.subscription_tier;
-const tier = SUBSCRIPTION_TIERS[tierKey] || SUBSCRIPTION_TIERS['The Viewer'];
+      'viewer': 'The Viewer',
+      'notifier': 'The Notifier', 
+      'inspector': 'The Inspector',
+      'chief': 'The Chief',
+    };
+    const tierKey = TIER_ALIASES[user.subscription_tier?.toLowerCase()] || user.subscription_tier;
+    const tier = SUBSCRIPTION_TIERS[tierKey] || SUBSCRIPTION_TIERS['The Viewer'];
 
-    // Get usage counts
     const { count: notesCount } = await supabase
       .from('place_notes')
       .select('*', { count: 'exact', head: true })
       .eq('creator_id', userId);
 
+    // Only count ACTIVE contacts
     const { count: contactsCount } = await supabase
       .from('contacts')
       .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .eq('status', 'active');
 
     const { count: groupsCount } = await supabase
       .from('groups')
@@ -108,15 +108,15 @@ const tier = SUBSCRIPTION_TIERS[tierKey] || SUBSCRIPTION_TIERS['The Viewer'];
       }
     };
 
- } catch (error) {
-    console.error('=== SUBSCRIPTION LIMIT ERROR ===');
+  } catch (error) {
+    console.error('=== SUBSCRIPTION INFO ERROR ===');
     console.error('Error:', error);
-    console.error('Error message:', error.message);
-    console.error('Error code:', error.code);
-    console.error('Error details:', JSON.stringify(error, null, 2));
-    console.error('User ID:', userId);
-    console.error('Resource type:', resourceType);
-    return { allowed: false, limit: 0, current: 0 };
+    return {
+      user: { email: '', name: '' },
+      tier: SUBSCRIPTION_TIERS['The Viewer'],
+      limits: SUBSCRIPTION_TIERS['The Viewer'].limits,
+      usage: { notes: 0, contacts: 0, groups: 0, projects: 0 }
+    };
   }
 }
 
@@ -132,16 +132,15 @@ async function checkSubscriptionLimit(userId, resourceType) {
     if (error) throw error;
 
     const TIER_ALIASES = {
-  'viewer': 'The Viewer',
-  'notifier': 'The Notifier',
-  'inspector': 'The Inspector',
-  'chief': 'The Chief',
-};
-const tierKey = TIER_ALIASES[user.subscription_tier?.toLowerCase()] || user.subscription_tier;
-const tier = SUBSCRIPTION_TIERS[tierKey] || SUBSCRIPTION_TIERS['The Viewer'];
+      'viewer': 'The Viewer',
+      'notifier': 'The Notifier',
+      'inspector': 'The Inspector',
+      'chief': 'The Chief',
+    };
+    const tierKey = TIER_ALIASES[user.subscription_tier?.toLowerCase()] || user.subscription_tier;
+    const tier = SUBSCRIPTION_TIERS[tierKey] || SUBSCRIPTION_TIERS['The Viewer'];
     const limit = tier.limits[resourceType];
 
-    // Count current usage
     let tableName;
     switch(resourceType) {
       case 'notes':
@@ -161,18 +160,25 @@ const tier = SUBSCRIPTION_TIERS[tierKey] || SUBSCRIPTION_TIERS['The Viewer'];
     }
 
     let column = 'user_id';
-if (resourceType === 'groups') {
-  column = 'created_by';
-} else if (resourceType === 'projects') {
-  column = 'owner_id';
-} else if (resourceType === 'notes') {
-  column = 'creator_id';
-}
+    if (resourceType === 'groups') {
+      column = 'created_by';
+    } else if (resourceType === 'projects') {
+      column = 'owner_id';
+    } else if (resourceType === 'notes') {
+      column = 'creator_id';
+    }
 
-const { count, error: countError } = await supabase
-  .from(tableName)
-  .select('*', { count: 'exact', head: true })
-  .eq(column, userId);
+    let query = supabase
+      .from(tableName)
+      .select('*', { count: 'exact', head: true })
+      .eq(column, userId);
+
+    // Only count active contacts toward the limit
+    if (resourceType === 'contacts') {
+      query = query.eq('status', 'active');
+    }
+
+    const { count, error: countError } = await query;
 
     if (countError) throw countError;
 
@@ -187,6 +193,7 @@ const { count, error: countError } = await supabase
     return { allowed: false, limit: 0, current: 0 };
   }
 }
+
 module.exports = {
   SUBSCRIPTION_TIERS,
   getUserSubscriptionInfo,
