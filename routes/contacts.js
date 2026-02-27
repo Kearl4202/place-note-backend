@@ -55,7 +55,6 @@ router.get('/requests', authenticateToken, async (req, res) => {
     const userId = req.user.userId;
     console.log('📥 Fetching incoming requests for user:', userId);
 
-    // Find contacts where someone else added me (contact_user_id = me) and status is invited
     const { data: requests, error } = await supabase
       .from('contacts')
       .select('*')
@@ -64,7 +63,6 @@ router.get('/requests', authenticateToken, async (req, res) => {
 
     if (error) throw error;
 
-    // Get requester info for each request
     const requestsWithInfo = await Promise.all(
       (requests || []).map(async (request) => {
         const { data: requester } = await supabase
@@ -152,7 +150,6 @@ router.post('/', authenticateToken, async (req, res) => {
       .single();
     if (error) throw error;
 
-    // Send push notification if contact_user_id provided
     console.log('🔔 Checking push notification for contact_user_id:', contact_user_id);
     if (contact_user_id) {
       const { data: addedUser } = await supabase
@@ -180,8 +177,6 @@ router.post('/', authenticateToken, async (req, res) => {
       } else {
         console.log('🔔 No push token found, skipping notification');
       }
-    } else {
-      console.log('🔔 No contact_user_id, skipping notification');
     }
 
     res.status(201).json({ 
@@ -194,15 +189,13 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Accept a contact request
+// Accept a contact request — simple accept, no add-back
 router.put('/:id/accept', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const contactId = req.params.id;
-    const { add_back } = req.body;
-    console.log('✅ Accepting contact request:', contactId, 'add_back:', add_back);
+    console.log('✅ Accepting contact request:', contactId);
 
-    // Verify this request is for the current user
     const { data: contact, error: fetchError } = await supabase
       .from('contacts')
       .select('*')
@@ -215,7 +208,6 @@ router.put('/:id/accept', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Contact request not found' });
     }
 
-    // Update status to active
     const { error: updateError } = await supabase
       .from('contacts')
       .update({ status: 'active' })
@@ -223,39 +215,7 @@ router.put('/:id/accept', authenticateToken, async (req, res) => {
 
     if (updateError) throw updateError;
 
-    // If add_back, create a reverse contact (me adding them)
-    if (add_back) {
-      // Check if I already have them as a contact
-      const { data: existing } = await supabase
-        .from('contacts')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('contact_user_id', contact.user_id)
-        .single();
-
-      if (!existing) {
-        // Get the requester's info
-        const { data: requester } = await supabase
-          .from('users')
-          .select('name, email, phone')
-          .eq('id', contact.user_id)
-          .single();
-
-        await supabase
-          .from('contacts')
-          .insert([{
-            user_id: userId,
-            name: requester?.name || contact.name,
-            email: requester?.email || null,
-            phone: requester?.phone || null,
-            contact_user_id: contact.user_id,
-            status: 'active',
-          }]);
-        console.log('✅ Reverse contact created');
-      }
-    }
-
-    // Notify the original requester that their request was accepted
+    // Notify the requester
     const { data: requesterUser } = await supabase
       .from('users')
       .select('push_token')
@@ -291,7 +251,6 @@ router.put('/:id/decline', authenticateToken, async (req, res) => {
     const contactId = req.params.id;
     console.log('❌ Declining contact request:', contactId);
 
-    // Verify this request is for the current user
     const { data: contact, error: fetchError } = await supabase
       .from('contacts')
       .select('*')
@@ -304,7 +263,6 @@ router.put('/:id/decline', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Contact request not found' });
     }
 
-    // Delete the contact request
     const { error: deleteError } = await supabase
       .from('contacts')
       .delete()
