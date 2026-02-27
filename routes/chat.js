@@ -4,11 +4,106 @@ const { supabase } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
-
+const axios = require('axios');
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
 });
+
+const sendPushNotification = async (pushToken, title, body) => {
+  try {
+    await axios.post('https://exp.host/--/api/v2/push/send', {
+      to: pushToken,
+      title,
+      body,
+      sound: 'default',
+    });
+  } catch (error) {
+    console.error('🔔 Error sending push notification:', error.message);
+  }
+};
+
+// Notify all assigned users about a change to a place note
+const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescription) => {
+  try {
+    // Get the note info
+    const { data: note } = await supabase
+      .from('place_notes')
+      .select('name, creator_id')
+      .eq('id', noteId)
+      .single();
+    if (!note) return;
+
+    // Get sender name
+    const { data: sender } = await supabase
+      .from('users')
+      .select('name')
+      .eq('id', senderUserId)
+      .single();
+    const senderName = sender?.name || 'Someone';
+
+    // Get all assignments for this note
+    const { data: assignments } = await supabase
+      .from('assignments')
+      .select('user_id, group_id')
+      .eq('place_note_id', noteId);
+
+    const userIdsToNotify = new Set();
+
+    // Add the creator (they should know about changes too)
+    if (note.creator_id !== senderUserId) {
+      userIdsToNotify.add(note.creator_id);
+    }
+
+    for (const a of assignments || []) {
+      if (a.user_id) {
+        const { data: contact } = await supabase
+          .from('contacts')
+          .select('contact_user_id')
+          .eq('id', a.user_id)
+          .eq('status', 'active')
+          .single();
+        if (contact?.contact_user_id) {
+          userIdsToNotify.add(contact.contact_user_id);
+        }
+      }
+      if (a.group_id) {
+        const { data: members } = await supabase
+          .from('contact_groups')
+          .select('contact_id, contacts!inner(contact_user_id, status)')
+          .eq('group_id', a.group_id)
+          .eq('contacts.status', 'active');
+        for (const member of members || []) {
+          if (member.contacts?.contact_user_id) {
+            userIdsToNotify.add(member.contacts.contact_user_id);
+          }
+        }
+      }
+    }
+
+    // Don't notify the person who made the change
+    userIdsToNotify.delete(senderUserId);
+
+    console.log('📍 Notifying', userIdsToNotify.size, 'users about change to:', note.name);
+
+    for (const userId of userIdsToNotify) {
+      const { data: user } = await supabase
+        .from('users')
+        .select('push_token')
+        .eq('id', userId)
+        .single();
+      if (user?.push_token) {
+        await sendPushNotification(
+          user.push_token,
+          `Update: ${note.name}`,
+          `${senderName} ${changeDescription}`
+        );
+      }
+    }
+  } catch (error) {
+    console.error('Error notifying about change:', error);
+  }
+};
 
 // Get chat messages for a place note
 router.get('/:noteId', authenticateToken, async (req, res) => {
@@ -51,6 +146,10 @@ router.post('/', authenticateToken, async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+
+    // Notify assigned users about the new tag
+    await notifyAssignedUsersAboutChange(place_note_id, userId, 'added a text tag — tap to see it');
+
     res.status(201).json({ message: 'Message sent', chat: data });
   } catch (error) {
     console.error('Error sending message:', error);
@@ -63,14 +162,12 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
   try {
     const userId = req.user.userId;
     const { place_note_id, message_type } = req.body;
-
     if (!req.file) {
       return res.status(400).json({ error: 'No file provided' });
     }
     if (!place_note_id) {
       return res.status(400).json({ error: 'place_note_id is required' });
     }
-
     const file = req.file;
     const ext = path.extname(file.originalname) || '';
     const fileName = `${place_note_id}/${Date.now()}_${userId}${ext}`;
@@ -82,14 +179,12 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
         contentType: file.mimetype,
         upsert: false,
       });
-
     if (uploadError) throw uploadError;
 
     // Get public URL
     const { data: urlData } = supabase.storage
       .from('place-note-files')
       .getPublicUrl(fileName);
-
     const fileUrl = urlData.publicUrl;
 
     // Save message to chat table
@@ -104,8 +199,11 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
       }])
       .select()
       .single();
-
     if (error) throw error;
+
+    // Notify assigned users about the upload
+    const typeLabel = message_type === 'document' ? 'added a document' : 'added a photo';
+    await notifyAssignedUsersAboutChange(place_note_id, userId, `${typeLabel} — tap to see it`);
 
     res.status(201).json({ message: 'File uploaded', chat: data, file_url: fileUrl });
   } catch (error) {
