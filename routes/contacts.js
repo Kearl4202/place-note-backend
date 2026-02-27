@@ -80,6 +80,7 @@ router.get('/search', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
+    console.log('📨 Creating contact:', { userId, body: req.body });
     const { name, email, phone, contact_user_id } = req.body;
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Contact name is required' });
