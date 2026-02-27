@@ -49,6 +49,48 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
+// Get incoming contact requests (people who want to add ME)
+router.get('/requests', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    console.log('📥 Fetching incoming requests for user:', userId);
+
+    // Find contacts where someone else added me (contact_user_id = me) and status is invited
+    const { data: requests, error } = await supabase
+      .from('contacts')
+      .select('*')
+      .eq('contact_user_id', userId)
+      .eq('status', 'invited');
+
+    if (error) throw error;
+
+    // Get requester info for each request
+    const requestsWithInfo = await Promise.all(
+      (requests || []).map(async (request) => {
+        const { data: requester } = await supabase
+          .from('users')
+          .select('id, name, email, phone')
+          .eq('id', request.user_id)
+          .single();
+        return {
+          id: request.id,
+          requester_id: request.user_id,
+          requester_name: requester?.name || 'Unknown',
+          requester_email: requester?.email || '',
+          requester_phone: requester?.phone || '',
+          created_at: request.created_at,
+        };
+      })
+    );
+
+    console.log('📥 Found', requestsWithInfo.length, 'incoming requests');
+    res.json({ requests: requestsWithInfo });
+  } catch (error) {
+    console.error('Error fetching requests:', error);
+    res.status(500).json({ error: 'Failed to fetch requests' });
+  }
+});
+
 // Search users by email or phone
 router.get('/search', authenticateToken, async (req, res) => {
   try {
@@ -104,6 +146,7 @@ router.post('/', authenticateToken, async (req, res) => {
         email: email ? email.trim() : null,
         phone: phone ? phone.trim() : null,
         contact_user_id: contact_user_id || null,
+        status: contact_user_id ? 'invited' : 'active',
       }])
       .select()
       .single();
@@ -148,6 +191,132 @@ router.post('/', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error creating contact:', error);
     res.status(500).json({ error: 'Failed to create contact' });
+  }
+});
+
+// Accept a contact request
+router.put('/:id/accept', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const contactId = req.params.id;
+    const { add_back } = req.body;
+    console.log('✅ Accepting contact request:', contactId, 'add_back:', add_back);
+
+    // Verify this request is for the current user
+    const { data: contact, error: fetchError } = await supabase
+      .from('contacts')
+      .select('*')
+      .eq('id', contactId)
+      .eq('contact_user_id', userId)
+      .eq('status', 'invited')
+      .single();
+
+    if (fetchError || !contact) {
+      return res.status(404).json({ error: 'Contact request not found' });
+    }
+
+    // Update status to active
+    const { error: updateError } = await supabase
+      .from('contacts')
+      .update({ status: 'active' })
+      .eq('id', contactId);
+
+    if (updateError) throw updateError;
+
+    // If add_back, create a reverse contact (me adding them)
+    if (add_back) {
+      // Check if I already have them as a contact
+      const { data: existing } = await supabase
+        .from('contacts')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('contact_user_id', contact.user_id)
+        .single();
+
+      if (!existing) {
+        // Get the requester's info
+        const { data: requester } = await supabase
+          .from('users')
+          .select('name, email, phone')
+          .eq('id', contact.user_id)
+          .single();
+
+        await supabase
+          .from('contacts')
+          .insert([{
+            user_id: userId,
+            name: requester?.name || contact.name,
+            email: requester?.email || null,
+            phone: requester?.phone || null,
+            contact_user_id: contact.user_id,
+            status: 'active',
+          }]);
+        console.log('✅ Reverse contact created');
+      }
+    }
+
+    // Notify the original requester that their request was accepted
+    const { data: requesterUser } = await supabase
+      .from('users')
+      .select('push_token')
+      .eq('id', contact.user_id)
+      .single();
+
+    const { data: acceptingUser } = await supabase
+      .from('users')
+      .select('name')
+      .eq('id', userId)
+      .single();
+
+    if (requesterUser?.push_token) {
+      await sendPushNotification(
+        requesterUser.push_token,
+        'Contact Accepted!',
+        `${acceptingUser.name} accepted your contact request`
+      );
+    }
+
+    console.log('✅ Contact request accepted');
+    res.json({ message: 'Contact request accepted' });
+  } catch (error) {
+    console.error('Error accepting contact:', error);
+    res.status(500).json({ error: 'Failed to accept contact request' });
+  }
+});
+
+// Decline a contact request
+router.put('/:id/decline', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const contactId = req.params.id;
+    console.log('❌ Declining contact request:', contactId);
+
+    // Verify this request is for the current user
+    const { data: contact, error: fetchError } = await supabase
+      .from('contacts')
+      .select('*')
+      .eq('id', contactId)
+      .eq('contact_user_id', userId)
+      .eq('status', 'invited')
+      .single();
+
+    if (fetchError || !contact) {
+      return res.status(404).json({ error: 'Contact request not found' });
+    }
+
+    // Delete the contact request
+    const { error: deleteError } = await supabase
+      .from('contacts')
+      .delete()
+      .eq('id', contactId);
+
+    if (deleteError) throw deleteError;
+
+    console.log('❌ Contact request declined and deleted');
+    res.json({ message: 'Contact request declined' });
+  } catch (error) {
+    console.error('Error declining contact:', error);
+    res.status(500).json({ error: 'Failed to decline contact request' });
   }
 });
 
