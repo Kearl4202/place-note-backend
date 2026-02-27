@@ -7,14 +7,16 @@ const axios = require('axios');
 
 const sendPushNotification = async (pushToken, title, body) => {
   try {
-    await axios.post('https://exp.host/--/api/v2/push/send', {
+    console.log('🔔 Attempting to send push to:', pushToken);
+    const response = await axios.post('https://exp.host/--/api/v2/push/send', {
       to: pushToken,
       title,
       body,
       sound: 'default',
     });
+    console.log('🔔 Push API response:', JSON.stringify(response.data));
   } catch (error) {
-    console.error('Error sending push notification:', error);
+    console.error('🔔 Error sending push notification:', error.message);
   }
 };
 
@@ -80,8 +82,9 @@ router.get('/search', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
-    console.log('📨 Creating contact:', { userId, body: req.body });
     const { name, email, phone, contact_user_id } = req.body;
+    console.log('📨 Creating contact:', { userId, name, contact_user_id });
+
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Contact name is required' });
     }
@@ -106,7 +109,7 @@ router.post('/', authenticateToken, async (req, res) => {
       .single();
     if (error) throw error;
 
-    // Send push notification if contact_user_id provided (user found via search)
+    // Send push notification if contact_user_id provided
     console.log('🔔 Checking push notification for contact_user_id:', contact_user_id);
     if (contact_user_id) {
       const { data: addedUser } = await supabase
@@ -115,12 +118,14 @@ router.post('/', authenticateToken, async (req, res) => {
         .eq('id', contact_user_id)
         .single();
       console.log('🔔 Added user push token:', addedUser?.push_token);
+
       const { data: requestingUser } = await supabase
         .from('users')
         .select('name')
         .eq('id', userId)
         .single();
       console.log('🔔 Requesting user name:', requestingUser?.name);
+
       if (addedUser?.push_token) {
         console.log('🔔 Sending push notification...');
         await sendPushNotification(
@@ -132,7 +137,9 @@ router.post('/', authenticateToken, async (req, res) => {
       } else {
         console.log('🔔 No push token found, skipping notification');
       }
-    }}
+    } else {
+      console.log('🔔 No contact_user_id, skipping notification');
+    }
 
     res.status(201).json({ 
       message: 'Contact created successfully',
