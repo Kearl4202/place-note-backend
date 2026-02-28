@@ -5,22 +5,20 @@ const { authenticateToken } = require('../middleware/auth');
 const { checkSubscriptionLimit } = require('../config/subscriptions');
 const axios = require('axios');
 
-const sendPushNotification = async (pushToken, title, body) => {
+const sendPushNotification = async (pushToken, title, body, data = {}) => {
   try {
-    console.log('🔔 Attempting to send push to:', pushToken);
-    const response = await axios.post('https://exp.host/--/api/v2/push/send', {
+    await axios.post('https://exp.host/--/api/v2/push/send', {
       to: pushToken,
       title,
       body,
       sound: 'default',
+      data,
     });
-    console.log('🔔 Push API response:', JSON.stringify(response.data));
   } catch (error) {
     console.error('🔔 Error sending push notification:', error.message);
   }
 };
 
-// Get all contacts for a user
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -49,18 +47,14 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Get incoming contact requests (people who want to add ME)
 router.get('/requests', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
-    console.log('📥 Fetching incoming requests for user:', userId);
-
     const { data: requests, error } = await supabase
       .from('contacts')
       .select('*')
       .eq('contact_user_id', userId)
       .eq('status', 'invited');
-
     if (error) throw error;
 
     const requestsWithInfo = await Promise.all(
@@ -80,8 +74,6 @@ router.get('/requests', authenticateToken, async (req, res) => {
         };
       })
     );
-
-    console.log('📥 Found', requestsWithInfo.length, 'incoming requests');
     res.json({ requests: requestsWithInfo });
   } catch (error) {
     console.error('Error fetching requests:', error);
@@ -89,7 +81,6 @@ router.get('/requests', authenticateToken, async (req, res) => {
   }
 });
 
-// Search users by email or phone
 router.get('/search', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -118,19 +109,16 @@ router.get('/search', authenticateToken, async (req, res) => {
   }
 });
 
-// Create a new contact
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const { name, email, phone, contact_user_id } = req.body;
-    console.log('📨 Creating contact:', { userId, name, contact_user_id });
-
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Contact name is required' });
     }
     const limitCheck = await checkSubscriptionLimit(userId, 'contacts');
     if (!limitCheck.allowed) {
-      return res.status(403).json({ 
+      return res.status(403).json({
         error: `You've reached your limit of ${limitCheck.limit} contacts. Upgrade to add more!`,
         limit: limitCheck.limit,
         current: limitCheck.current
@@ -150,51 +138,40 @@ router.post('/', authenticateToken, async (req, res) => {
       .single();
     if (error) throw error;
 
-    console.log('🔔 Checking push notification for contact_user_id:', contact_user_id);
     if (contact_user_id) {
       const { data: addedUser } = await supabase
         .from('users')
         .select('push_token')
         .eq('id', contact_user_id)
         .single();
-      console.log('🔔 Added user push token:', addedUser?.push_token);
 
       const { data: requestingUser } = await supabase
         .from('users')
         .select('name')
         .eq('id', userId)
         .single();
-      console.log('🔔 Requesting user name:', requestingUser?.name);
 
       if (addedUser?.push_token) {
-        console.log('🔔 Sending push notification...');
         await sendPushNotification(
           addedUser.push_token,
           'New Contact Request',
-          `${requestingUser.name} wants to add you as a contact`
+          `${requestingUser.name} wants to add you as a contact`,
+          { screen: 'contacts' }
         );
-        console.log('🔔 Push notification sent!');
-      } else {
-        console.log('🔔 No push token found, skipping notification');
       }
     }
 
-    res.status(201).json({ 
-      message: 'Contact created successfully',
-      contact: data 
-    });
+    res.status(201).json({ message: 'Contact created successfully', contact: data });
   } catch (error) {
     console.error('Error creating contact:', error);
     res.status(500).json({ error: 'Failed to create contact' });
   }
 });
 
-// Accept a contact request — simple accept, no add-back
 router.put('/:id/accept', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const contactId = req.params.id;
-    console.log('✅ Accepting contact request:', contactId);
 
     const { data: contact, error: fetchError } = await supabase
       .from('contacts')
@@ -215,7 +192,6 @@ router.put('/:id/accept', authenticateToken, async (req, res) => {
 
     if (updateError) throw updateError;
 
-    // Notify the requester
     const { data: requesterUser } = await supabase
       .from('users')
       .select('push_token')
@@ -232,11 +208,11 @@ router.put('/:id/accept', authenticateToken, async (req, res) => {
       await sendPushNotification(
         requesterUser.push_token,
         'Contact Accepted!',
-        `${acceptingUser.name} accepted your contact request`
+        `${acceptingUser.name} accepted your contact request`,
+        { screen: 'contacts' }
       );
     }
 
-    console.log('✅ Contact request accepted');
     res.json({ message: 'Contact request accepted' });
   } catch (error) {
     console.error('Error accepting contact:', error);
@@ -244,12 +220,10 @@ router.put('/:id/accept', authenticateToken, async (req, res) => {
   }
 });
 
-// Decline a contact request
 router.put('/:id/decline', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const contactId = req.params.id;
-    console.log('❌ Declining contact request:', contactId);
 
     const { data: contact, error: fetchError } = await supabase
       .from('contacts')
@@ -270,7 +244,6 @@ router.put('/:id/decline', authenticateToken, async (req, res) => {
 
     if (deleteError) throw deleteError;
 
-    console.log('❌ Contact request declined and deleted');
     res.json({ message: 'Contact request declined' });
   } catch (error) {
     console.error('Error declining contact:', error);
@@ -278,7 +251,6 @@ router.put('/:id/decline', authenticateToken, async (req, res) => {
   }
 });
 
-// Update a contact
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -306,7 +278,6 @@ router.put('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Delete a contact
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
