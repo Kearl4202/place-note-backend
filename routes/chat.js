@@ -7,26 +7,25 @@ const path = require('path');
 const axios = require('axios');
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: { fileSize: 5 * 1024 * 1024 },
 });
 
-const sendPushNotification = async (pushToken, title, body) => {
+const sendPushNotification = async (pushToken, title, body, data = {}) => {
   try {
     await axios.post('https://exp.host/--/api/v2/push/send', {
       to: pushToken,
       title,
       body,
       sound: 'default',
+      data,
     });
   } catch (error) {
     console.error('🔔 Error sending push notification:', error.message);
   }
 };
 
-// Notify all assigned users about a change to a place note
 const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescription) => {
   try {
-    // Get the note info
     const { data: note } = await supabase
       .from('place_notes')
       .select('name, creator_id')
@@ -34,7 +33,6 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
       .single();
     if (!note) return;
 
-    // Get sender name
     const { data: sender } = await supabase
       .from('users')
       .select('name')
@@ -42,7 +40,6 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
       .single();
     const senderName = sender?.name || 'Someone';
 
-    // Get all assignments for this note
     const { data: assignments } = await supabase
       .from('assignments')
       .select('user_id, group_id')
@@ -50,7 +47,6 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
 
     const userIdsToNotify = new Set();
 
-    // Add the creator (they should know about changes too)
     if (note.creator_id !== senderUserId) {
       userIdsToNotify.add(note.creator_id);
     }
@@ -81,7 +77,6 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
       }
     }
 
-    // Don't notify the person who made the change
     userIdsToNotify.delete(senderUserId);
 
     console.log('📍 Notifying', userIdsToNotify.size, 'users about change to:', note.name);
@@ -96,7 +91,8 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
         await sendPushNotification(
           user.push_token,
           `Update: ${note.name}`,
-          `${senderName} ${changeDescription}`
+          `${senderName} ${changeDescription}`,
+          { screen: 'assigned-notes', noteId: noteId }
         );
       }
     }
@@ -105,7 +101,6 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
   }
 };
 
-// Get chat messages for a place note
 router.get('/:noteId', authenticateToken, async (req, res) => {
   try {
     const noteId = req.params.noteId;
@@ -126,7 +121,6 @@ router.get('/:noteId', authenticateToken, async (req, res) => {
   }
 });
 
-// Post a text message
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -147,7 +141,6 @@ router.post('/', authenticateToken, async (req, res) => {
       .single();
     if (error) throw error;
 
-    // Notify assigned users about the new tag
     await notifyAssignedUsersAboutChange(place_note_id, userId, 'added a text tag — tap to see it');
 
     res.status(201).json({ message: 'Message sent', chat: data });
@@ -157,7 +150,6 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Upload a file (photo or document)
 router.post('/upload', authenticateToken, upload.single('file'), async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -172,7 +164,6 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
     const ext = path.extname(file.originalname) || '';
     const fileName = `${place_note_id}/${Date.now()}_${userId}${ext}`;
 
-    // Upload to Supabase Storage
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from('place-note-files')
       .upload(fileName, file.buffer, {
@@ -181,13 +172,11 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
       });
     if (uploadError) throw uploadError;
 
-    // Get public URL
     const { data: urlData } = supabase.storage
       .from('place-note-files')
       .getPublicUrl(fileName);
     const fileUrl = urlData.publicUrl;
 
-    // Save message to chat table
     const { data, error } = await supabase
       .from('chat')
       .insert([{
@@ -201,7 +190,6 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
       .single();
     if (error) throw error;
 
-    // Notify assigned users about the upload
     const typeLabel = message_type === 'document' ? 'added a document' : 'added a photo';
     await notifyAssignedUsersAboutChange(place_note_id, userId, `${typeLabel} — tap to see it`);
 
