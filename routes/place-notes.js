@@ -5,23 +5,22 @@ const { authenticateToken } = require('../middleware/auth');
 const { checkSubscriptionLimit } = require('../config/subscriptions');
 const axios = require('axios');
 
-const sendPushNotification = async (pushToken, title, body) => {
+const sendPushNotification = async (pushToken, title, body, data = {}) => {
   try {
     await axios.post('https://exp.host/--/api/v2/push/send', {
       to: pushToken,
       title,
       body,
       sound: 'default',
+      data,
     });
   } catch (error) {
     console.error('🔔 Error sending push notification:', error.message);
   }
 };
 
-// Notify assigned users about a place note
 const notifyAssignedUsers = async (noteId, noteName, creatorId) => {
   try {
-    // Get creator name
     const { data: creator } = await supabase
       .from('users')
       .select('name')
@@ -29,7 +28,6 @@ const notifyAssignedUsers = async (noteId, noteName, creatorId) => {
       .single();
     const creatorName = creator?.name || 'Someone';
 
-    // Get all assignments for this note
     const { data: assignments } = await supabase
       .from('assignments')
       .select('user_id, group_id')
@@ -39,7 +37,6 @@ const notifyAssignedUsers = async (noteId, noteName, creatorId) => {
 
     for (const a of assignments || []) {
       if (a.user_id) {
-        // Individual contact — get their contact_user_id
         const { data: contact } = await supabase
           .from('contacts')
           .select('contact_user_id')
@@ -51,7 +48,6 @@ const notifyAssignedUsers = async (noteId, noteName, creatorId) => {
         }
       }
       if (a.group_id) {
-        // Group — get all member contact_user_ids
         const { data: members } = await supabase
           .from('contact_groups')
           .select('contact_id, contacts!inner(contact_user_id, status)')
@@ -65,12 +61,8 @@ const notifyAssignedUsers = async (noteId, noteName, creatorId) => {
       }
     }
 
-    // Don't notify the creator
     userIdsToNotify.delete(creatorId);
 
-    console.log('📍 Notifying', userIdsToNotify.size, 'users about place note:', noteName);
-
-    // Get push tokens and send notifications
     for (const userId of userIdsToNotify) {
       const { data: user } = await supabase
         .from('users')
@@ -81,7 +73,8 @@ const notifyAssignedUsers = async (noteId, noteName, creatorId) => {
         await sendPushNotification(
           user.push_token,
           'New Place Note Assignment',
-          `${creatorName} assigned you to "${noteName}"`
+          `${creatorName} assigned you to "${noteName}"`,
+          { screen: 'assigned-notes', noteId: noteId }
         );
       }
     }
@@ -90,7 +83,6 @@ const notifyAssignedUsers = async (noteId, noteName, creatorId) => {
   }
 };
 
-// Create a new place note
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { name, description, latitude, longitude, perimeter_feet, assigned_contacts, assigned_groups, project_id } = req.body;
@@ -98,7 +90,7 @@ router.post('/', authenticateToken, async (req, res) => {
 
     const limitCheck = await checkSubscriptionLimit(userId, 'notes');
     if (!limitCheck.allowed) {
-      return res.status(403).json({ 
+      return res.status(403).json({
         error: `You've reached your limit of ${limitCheck.limit} place notes. Upgrade to add more!`,
         limit: limitCheck.limit,
         current: limitCheck.current
@@ -140,7 +132,6 @@ router.post('/', authenticateToken, async (req, res) => {
       await supabase.from('assignments').insert(groupAssignments);
     }
 
-    // Notify assigned users
     if ((assigned_contacts && assigned_contacts.length > 0) || (assigned_groups && assigned_groups.length > 0)) {
       await notifyAssignedUsers(data.id, data.name, userId);
     }
@@ -152,7 +143,6 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Get all place notes for the authenticated user (ones I created)
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -169,13 +159,10 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Get place notes assigned TO the current user
 router.get('/assigned-to-me', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
-    console.log('📍 Fetching assigned notes for user:', userId);
 
-    // Find my contact IDs (where I am the contact_user_id)
     const { data: myContactRecords } = await supabase
       .from('contacts')
       .select('id')
@@ -184,7 +171,6 @@ router.get('/assigned-to-me', authenticateToken, async (req, res) => {
 
     const myContactIds = (myContactRecords || []).map(c => c.id);
 
-    // Find groups I'm a member of (through my contact records)
     const { data: myGroupMemberships } = await supabase
       .from('contact_groups')
       .select('group_id')
@@ -192,7 +178,6 @@ router.get('/assigned-to-me', authenticateToken, async (req, res) => {
 
     const myGroupIds = (myGroupMemberships || []).map(m => m.group_id);
 
-    // Find assignments where I'm directly assigned or in a group
     let assignedNoteIds = new Set();
 
     if (myContactIds.length > 0) {
@@ -219,7 +204,6 @@ router.get('/assigned-to-me', authenticateToken, async (req, res) => {
       return res.json({ placeNotes: [] });
     }
 
-    // Fetch the actual place notes
     const { data: notes, error } = await supabase
       .from('place_notes')
       .select(`*, users!place_notes_creator_id_fkey (name)`)
@@ -228,8 +212,6 @@ router.get('/assigned-to-me', authenticateToken, async (req, res) => {
       .order('created_at', { ascending: false });
 
     if (error) throw error;
-
-    console.log('📍 Found', (notes || []).length, 'assigned notes');
     res.json({ placeNotes: notes || [] });
   } catch (error) {
     console.error('Error fetching assigned notes:', error);
@@ -237,7 +219,6 @@ router.get('/assigned-to-me', authenticateToken, async (req, res) => {
   }
 });
 
-// Get assignments for a place note
 router.get('/assignments/:noteId', authenticateToken, async (req, res) => {
   try {
     const noteId = req.params.noteId;
@@ -293,7 +274,6 @@ router.get('/assignments/:noteId', authenticateToken, async (req, res) => {
   }
 });
 
-// Get snapshot for a place note
 router.get('/:id/snapshot', authenticateToken, async (req, res) => {
   try {
     const noteId = req.params.id;
@@ -309,7 +289,6 @@ router.get('/:id/snapshot', authenticateToken, async (req, res) => {
   }
 });
 
-// Archive a place note
 router.put('/:id/archive', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -378,7 +357,6 @@ router.put('/:id/archive', authenticateToken, async (req, res) => {
   }
 });
 
-// Restore a place note
 router.put('/:id/restore', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -386,7 +364,7 @@ router.put('/:id/restore', authenticateToken, async (req, res) => {
 
     const limitCheck = await checkSubscriptionLimit(userId, 'notes');
     if (!limitCheck.allowed) {
-      return res.status(403).json({ 
+      return res.status(403).json({
         error: `You have reached your limit of ${limitCheck.limit} active place notes. Archive or delete a note before restoring.`
       });
     }
@@ -406,7 +384,6 @@ router.put('/:id/restore', authenticateToken, async (req, res) => {
   }
 });
 
-// Delete a place note permanently
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -424,7 +401,6 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Update assignments for a place note
 router.put('/:id/assignments', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -462,7 +438,6 @@ router.put('/:id/assignments', authenticateToken, async (req, res) => {
       await supabase.from('assignments').insert(groupAssignments);
     }
 
-    // Notify newly assigned users
     if ((contact_ids && contact_ids.length > 0) || (group_ids && group_ids.length > 0)) {
       await notifyAssignedUsers(noteId, note.name, userId);
     }
