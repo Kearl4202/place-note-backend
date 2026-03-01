@@ -19,51 +19,44 @@ const sendPushNotification = async (pushToken, title, body, data = {}) => {
   }
 };
 
-const notifyAssignedUsers = async (noteId, noteName, creatorId) => {
-  try {
-    const { data: creator } = await supabase
-      .from('users')
-      .select('name')
-      .eq('id', creatorId)
-      .single();
-    const creatorName = creator?.name || 'Someone';
+// Get all assigned real user IDs for a note
+const getAssignedUserIds = async (noteId) => {
+  const userIds = new Set();
+  const { data: assignments } = await supabase
+    .from('assignments')
+    .select('user_id, group_id')
+    .eq('place_note_id', noteId);
 
-    const { data: assignments } = await supabase
-      .from('assignments')
-      .select('user_id, group_id')
-      .eq('place_note_id', noteId);
-
-    const userIdsToNotify = new Set();
-
-    for (const a of assignments || []) {
-      if (a.user_id) {
-        const { data: contact } = await supabase
-          .from('contacts')
-          .select('contact_user_id')
-          .eq('id', a.user_id)
-          .eq('status', 'active')
-          .single();
-        if (contact?.contact_user_id) {
-          userIdsToNotify.add(contact.contact_user_id);
-        }
-      }
-      if (a.group_id) {
-        const { data: members } = await supabase
-          .from('contact_groups')
-          .select('contact_id, contacts!inner(contact_user_id, status)')
-          .eq('group_id', a.group_id)
-          .eq('contacts.status', 'active');
-        for (const member of members || []) {
-          if (member.contacts?.contact_user_id) {
-            userIdsToNotify.add(member.contacts.contact_user_id);
-          }
-        }
+  for (const a of assignments || []) {
+    if (a.user_id) {
+      const { data: contact } = await supabase
+        .from('contacts')
+        .select('contact_user_id')
+        .eq('id', a.user_id)
+        .eq('status', 'active')
+        .single();
+      if (contact?.contact_user_id) userIds.add(contact.contact_user_id);
+    }
+    if (a.group_id) {
+      const { data: members } = await supabase
+        .from('contact_groups')
+        .select('contact_id, contacts!inner(contact_user_id, status)')
+        .eq('group_id', a.group_id)
+        .eq('contacts.status', 'active');
+      for (const member of members || []) {
+        if (member.contacts?.contact_user_id) userIds.add(member.contacts.contact_user_id);
       }
     }
+  }
+  return userIds;
+};
 
-    userIdsToNotify.delete(creatorId);
+const notifyAssignedUsers = async (noteId, noteName, creatorId, title, message, screen) => {
+  try {
+    const userIds = await getAssignedUserIds(noteId);
+    userIds.delete(creatorId);
 
-    for (const userId of userIdsToNotify) {
+    for (const userId of userIds) {
       const { data: user } = await supabase
         .from('users')
         .select('push_token')
@@ -72,9 +65,9 @@ const notifyAssignedUsers = async (noteId, noteName, creatorId) => {
       if (user?.push_token) {
         await sendPushNotification(
           user.push_token,
-          'New Place Note Assignment',
-          `${creatorName} assigned you to "${noteName}"`,
-          { screen: 'assigned-notes', noteId: noteId }
+          title || 'New Place Note Assignment',
+          message || `You were assigned to "${noteName}"`,
+          { screen: screen || 'assigned-notes', noteId }
         );
       }
     }
@@ -133,7 +126,12 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 
     if ((assigned_contacts && assigned_contacts.length > 0) || (assigned_groups && assigned_groups.length > 0)) {
-      await notifyAssignedUsers(data.id, data.name, userId);
+      const { data: creator } = await supabase.from('users').select('name').eq('id', userId).single();
+      await notifyAssignedUsers(data.id, data.name, userId,
+        'New Place Note Assignment',
+        `${creator?.name || 'Someone'} assigned you to "${data.name}"`,
+        'assigned-notes'
+      );
     }
 
     res.status(201).json({ message: 'Place note created successfully', placeNote: data });
@@ -377,6 +375,15 @@ router.put('/:id/restore', authenticateToken, async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+
+    // Notify assigned users that the note was restored
+    const { data: creator } = await supabase.from('users').select('name').eq('id', userId).single();
+    await notifyAssignedUsers(noteId, data.name, userId,
+      'Place Note Restored!',
+      `${creator?.name || 'Someone'} restored "${data.name}" — you're assigned again`,
+      'assigned-notes'
+    );
+
     res.json({ message: 'Note restored successfully', placeNote: data });
   } catch (error) {
     console.error('Error restoring note:', error);
@@ -439,7 +446,12 @@ router.put('/:id/assignments', authenticateToken, async (req, res) => {
     }
 
     if ((contact_ids && contact_ids.length > 0) || (group_ids && group_ids.length > 0)) {
-      await notifyAssignedUsers(noteId, note.name, userId);
+      const { data: creator } = await supabase.from('users').select('name').eq('id', userId).single();
+      await notifyAssignedUsers(noteId, note.name, userId,
+        'Assignment Updated',
+        `${creator?.name || 'Someone'} updated assignments on "${note.name}"`,
+        'assigned-notes'
+      );
     }
 
     res.json({ message: 'Assignments updated successfully' });
