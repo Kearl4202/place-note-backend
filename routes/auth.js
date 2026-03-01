@@ -2,28 +2,16 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
+const axios = require('axios');
 const { supabase } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 
-// Create email transporter
-var transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT) || 465,
-  secure: true,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
-
 var sendEmail = async function(to, subject, body) {
   try {
-    await transporter.sendMail({
-      from: '"Place Note" <' + process.env.SMTP_USER + '>',
-      to: to,
+    var response = await axios.post('https://api.resend.com/emails', {
+      from: 'Place Note <' + (process.env.RESEND_FROM || 'onboarding@resend.dev') + '>',
+      to: [to],
       subject: subject,
-      text: body,
       html: '<div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">'
         + '<div style="text-align: center; margin-bottom: 20px;">'
         + '<h1 style="color: #4F46E5; margin: 0;">Place Note</h1>'
@@ -32,13 +20,19 @@ var sendEmail = async function(to, subject, body) {
         + '<div style="background-color: #f9fafb; border-radius: 10px; padding: 20px; border: 1px solid #e5e7eb;">'
         + '<p style="color: #111827; font-size: 16px; line-height: 1.5;">' + body.replace(/\n/g, '<br>') + '</p>'
         + '</div>'
-        + '<p style="color: #9CA3AF; font-size: 12px; text-align: center; margin-top: 20px;">This is an automated message from Place Note. Do not reply to this email.</p>'
+        + '<p style="color: #9CA3AF; font-size: 12px; text-align: center; margin-top: 20px;">This is an automated message from Place Note.</p>'
         + '</div>',
+    }, {
+      headers: {
+        'Authorization': 'Bearer ' + process.env.RESEND_API_KEY,
+        'Content-Type': 'application/json',
+      },
     });
     console.log('Email sent to ' + to + ': ' + subject);
     return true;
   } catch (error) {
-    console.error('Failed to send email to ' + to + ':', error.message);
+    var errMsg = error.response ? JSON.stringify(error.response.data) : error.message;
+    console.error('Failed to send email to ' + to + ':', errMsg);
     return false;
   }
 };
