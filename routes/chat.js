@@ -10,17 +10,17 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
 });
 
-const sendPushNotification = async (pushToken, title, body, data = {}) => {
+const sendPushNotification = async (pushToken, title, body, data) => {
   try {
     await axios.post('https://exp.host/--/api/v2/push/send', {
       to: pushToken,
-      title,
-      body,
+      title: title,
+      body: body,
       sound: 'default',
-      data,
+      data: data || {},
     });
   } catch (error) {
-    console.error('🔔 Error sending push notification:', error.message);
+    console.error('Error sending push:', error.message);
   }
 };
 
@@ -33,11 +33,9 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
       .single();
     if (!note) return;
 
-    // Don't send tag notifications if the note was created less than 30 seconds ago
-    // (the assignment notification already went out)
-    const noteAge = Date.now() - new Date(note.created_at).getTime();
+    var noteAge = Date.now() - new Date(note.created_at).getTime();
     if (noteAge < 30000) {
-      console.log('📍 Skipping tag notification — note was just created', noteAge, 'ms ago');
+      console.log('Skipping tag notification - note just created', noteAge, 'ms ago');
       return;
     }
 
@@ -46,17 +44,17 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
       .select('name')
       .eq('id', senderUserId)
       .single();
-    const senderName = sender?.name || 'Someone';
+    var senderName = sender ? sender.name : 'Someone';
 
     const { data: assignments } = await supabase
       .from('assignments')
       .select('user_id, group_id')
       .eq('place_note_id', noteId);
 
-    // Collect assigned user IDs (real user accounts, not contact record IDs)
-    const assignedUserIds = new Set();
+    var assignedUserIds = new Set();
 
-    for (const a of assignments || []) {
+    for (var i = 0; i < (assignments || []).length; i++) {
+      var a = assignments[i];
       if (a.user_id) {
         const { data: contact } = await supabase
           .from('contacts')
@@ -64,7 +62,7 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
           .eq('id', a.user_id)
           .eq('status', 'active')
           .single();
-        if (contact?.contact_user_id) {
+        if (contact && contact.contact_user_id) {
           assignedUserIds.add(contact.contact_user_id);
         }
       }
@@ -74,44 +72,40 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
           .select('contact_id, contacts!inner(contact_user_id, status)')
           .eq('group_id', a.group_id)
           .eq('contacts.status', 'active');
-        for (const member of members || []) {
-          if (member.contacts?.contact_user_id) {
-            assignedUserIds.add(member.contacts.contact_user_id);
+        for (var j = 0; j < (members || []).length; j++) {
+          if (members[j].contacts && members[j].contacts.contact_user_id) {
+            assignedUserIds.add(members[j].contacts.contact_user_id);
           }
         }
       }
     }
 
-    // Build full list: assigned users + creator
-    const allUserIds = new Set(assignedUserIds);
-    const creatorId = note.creator_id;
-    if (creatorId !== senderUserId) {
+    var allUserIds = new Set(assignedUserIds);
+    var creatorId = note.creator_id;
+    if (String(creatorId) !== String(senderUserId)) {
       allUserIds.add(creatorId);
     }
 
-    // Don't notify the sender
     allUserIds.delete(senderUserId);
 
-    console.log('📍 Notifying', allUserIds.size, 'users about change to:', note.name);
-    console.log('📍 Creator ID:', creatorId);
-    console.log('📍 Assigned user IDs:', Array.from(assignedUserIds));
+    console.log('Notifying', allUserIds.size, 'users about change to:', note.name);
+    console.log('Creator ID:', creatorId);
 
-    for (const notifyUserId of allUserIds) {
+    for (var notifyUserId of allUserIds) {
       const { data: user } = await supabase
         .from('users')
         .select('push_token')
         .eq('id', notifyUserId)
         .single();
-      if (user?.push_token) {
-        // Creator goes to home, assigned users go to assigned-notes
-        const isCreator = String(notifyUserId) === String(creatorId);
-        const screen = isCreator ? 'home' : 'assigned-notes';
-        console.log('📍 Sending to', notifyUserId, 'screen:', screen, 'isCreator:', isCreator);
+      if (user && user.push_token) {
+        var isCreator = String(notifyUserId) === String(creatorId);
+        var screen = isCreator ? 'home' : 'assigned-notes';
+        console.log('Sending to', notifyUserId, 'screen:', screen, 'isCreator:', isCreator);
         await sendPushNotification(
           user.push_token,
-          `Update: ${note.name}`,
-          `${senderName} ${changeDescription}`,
-          { screen, noteId: noteId }
+          'Update: ' + note.name,
+          senderName + ' ' + changeDescription,
+          { screen: screen, noteId: noteId }
         );
       }
     }
@@ -122,18 +116,26 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
 
 router.get('/:noteId', authenticateToken, async (req, res) => {
   try {
-    const noteId = req.params.noteId;
+    var noteId = req.params.noteId;
     const { data, error } = await supabase
       .from('chat')
-      .select(`*, users!chat_user_id_fkey(name)`)
+      .select('*, users!chat_user_id_fkey(name)')
       .eq('place_note_id', noteId)
       .order('timestamp', { ascending: true });
     if (error) throw error;
-    const messages = (data || []).map(msg => ({
-      ...msg,
-      user_name: msg.users?.name || 'Unknown',
-    }));
-    res.json({ messages });
+    var messages = (data || []).map(function(msg) {
+      return {
+        id: msg.id,
+        place_note_id: msg.place_note_id,
+        user_id: msg.user_id,
+        message_type: msg.message_type,
+        content: msg.content,
+        file_url: msg.file_url,
+        timestamp: msg.timestamp,
+        user_name: msg.users ? msg.users.name : 'Unknown',
+      };
+    });
+    res.json({ messages: messages });
   } catch (error) {
     console.error('Error fetching chat:', error);
     res.status(500).json({ error: 'Failed to fetch chat messages' });
@@ -142,15 +144,18 @@ router.get('/:noteId', authenticateToken, async (req, res) => {
 
 router.post('/', authenticateToken, async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const { place_note_id, message_type, content, file_url } = req.body;
+    var userId = req.user.userId;
+    var place_note_id = req.body.place_note_id;
+    var message_type = req.body.message_type;
+    var content = req.body.content;
+    var file_url = req.body.file_url;
     if (!place_note_id) {
       return res.status(400).json({ error: 'place_note_id is required' });
     }
     const { data, error } = await supabase
       .from('chat')
       .insert([{
-        place_note_id,
+        place_note_id: place_note_id,
         user_id: userId,
         message_type: message_type || 'text',
         content: content || null,
@@ -160,7 +165,7 @@ router.post('/', authenticateToken, async (req, res) => {
       .single();
     if (error) throw error;
 
-    await notifyAssignedUsersAboutChange(place_note_id, userId, 'added a text tag — tap to see it');
+    await notifyAssignedUsersAboutChange(place_note_id, userId, 'added a text tag - tap to see it');
 
     res.status(201).json({ message: 'Message sent', chat: data });
   } catch (error) {
@@ -171,17 +176,18 @@ router.post('/', authenticateToken, async (req, res) => {
 
 router.post('/upload', authenticateToken, upload.single('file'), async (req, res) => {
   try {
-    const userId = req.user.userId;
-    const { place_note_id, message_type } = req.body;
+    var userId = req.user.userId;
+    var place_note_id = req.body.place_note_id;
+    var message_type = req.body.message_type;
     if (!req.file) {
       return res.status(400).json({ error: 'No file provided' });
     }
     if (!place_note_id) {
       return res.status(400).json({ error: 'place_note_id is required' });
     }
-    const file = req.file;
-    const ext = path.extname(file.originalname) || '';
-    const fileName = `${place_note_id}/${Date.now()}_${userId}${ext}`;
+    var file = req.file;
+    var ext = path.extname(file.originalname) || '';
+    var fileName = place_note_id + '/' + Date.now() + '_' + userId + ext;
 
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from('place-note-files')
@@ -194,12 +200,12 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
     const { data: urlData } = supabase.storage
       .from('place-note-files')
       .getPublicUrl(fileName);
-    const fileUrl = urlData.publicUrl;
+    var fileUrl = urlData.publicUrl;
 
     const { data, error } = await supabase
       .from('chat')
       .insert([{
-        place_note_id,
+        place_note_id: place_note_id,
         user_id: userId,
         message_type: message_type || 'photo',
         content: file.originalname,
@@ -209,8 +215,8 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
       .single();
     if (error) throw error;
 
-    const typeLabel = message_type === 'document' ? 'added a document' : 'added a photo';
-    await notifyAssignedUsersAboutChange(place_note_id, userId, `${typeLabel} — tap to see it`);
+    var typeLabel = message_type === 'document' ? 'added a document' : 'added a photo';
+    await notifyAssignedUsersAboutChange(place_note_id, userId, typeLabel + ' - tap to see it');
 
     res.status(201).json({ message: 'File uploaded', chat: data, file_url: fileUrl });
   } catch (error) {
