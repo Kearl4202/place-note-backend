@@ -84,24 +84,29 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
 
     // Build full list: assigned users + creator
     const allUserIds = new Set(assignedUserIds);
-    if (note.creator_id !== senderUserId) {
-      allUserIds.add(note.creator_id);
+    const creatorId = note.creator_id;
+    if (creatorId !== senderUserId) {
+      allUserIds.add(creatorId);
     }
 
     // Don't notify the sender
     allUserIds.delete(senderUserId);
 
     console.log('📍 Notifying', allUserIds.size, 'users about change to:', note.name);
+    console.log('📍 Creator ID:', creatorId);
+    console.log('📍 Assigned user IDs:', Array.from(assignedUserIds));
 
-    for (const userId of allUserIds) {
+    for (const notifyUserId of allUserIds) {
       const { data: user } = await supabase
         .from('users')
         .select('push_token')
-        .eq('id', userId)
+        .eq('id', notifyUserId)
         .single();
       if (user?.push_token) {
         // Creator goes to home, assigned users go to assigned-notes
-        const screen = (userId === note.creator_id) ? 'home' : 'assigned-notes';
+        const isCreator = String(notifyUserId) === String(creatorId);
+        const screen = isCreator ? 'home' : 'assigned-notes';
+        console.log('📍 Sending to', notifyUserId, 'screen:', screen, 'isCreator:', isCreator);
         await sendPushNotification(
           user.push_token,
           `Update: ${note.name}`,
