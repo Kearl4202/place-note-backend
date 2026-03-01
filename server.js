@@ -6,6 +6,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 const locationRoutes = require('./routes/location');
+const noteActivityRoutes = require('./routes/note-activity');
 
 const authRoutes = require('./routes/auth');
 const subscriptionRoutes = require('./routes/subscriptions');
@@ -23,6 +24,7 @@ app.use('/api/groups', groupRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/location', locationRoutes);
+app.use('/api/note-activity', noteActivityRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'Place Note API is running' });
