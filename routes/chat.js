@@ -28,10 +28,18 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
   try {
     const { data: note } = await supabase
       .from('place_notes')
-      .select('name, creator_id')
+      .select('name, creator_id, created_at')
       .eq('id', noteId)
       .single();
     if (!note) return;
+
+    // Don't send tag notifications if the note was created less than 30 seconds ago
+    // (the assignment notification already went out)
+    const noteAge = Date.now() - new Date(note.created_at).getTime();
+    if (noteAge < 30000) {
+      console.log('📍 Skipping tag notification — note was just created', noteAge, 'ms ago');
+      return;
+    }
 
     const { data: sender } = await supabase
       .from('users')
