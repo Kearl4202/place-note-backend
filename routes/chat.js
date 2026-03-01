@@ -45,11 +45,8 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
       .select('user_id, group_id')
       .eq('place_note_id', noteId);
 
-    const userIdsToNotify = new Set();
-
-    if (note.creator_id !== senderUserId) {
-      userIdsToNotify.add(note.creator_id);
-    }
+    // Collect assigned user IDs (real user accounts, not contact record IDs)
+    const assignedUserIds = new Set();
 
     for (const a of assignments || []) {
       if (a.user_id) {
@@ -60,7 +57,7 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
           .eq('status', 'active')
           .single();
         if (contact?.contact_user_id) {
-          userIdsToNotify.add(contact.contact_user_id);
+          assignedUserIds.add(contact.contact_user_id);
         }
       }
       if (a.group_id) {
@@ -71,28 +68,37 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
           .eq('contacts.status', 'active');
         for (const member of members || []) {
           if (member.contacts?.contact_user_id) {
-            userIdsToNotify.add(member.contacts.contact_user_id);
+            assignedUserIds.add(member.contacts.contact_user_id);
           }
         }
       }
     }
 
-    userIdsToNotify.delete(senderUserId);
+    // Build full list: assigned users + creator
+    const allUserIds = new Set(assignedUserIds);
+    if (note.creator_id !== senderUserId) {
+      allUserIds.add(note.creator_id);
+    }
 
-    console.log('📍 Notifying', userIdsToNotify.size, 'users about change to:', note.name);
+    // Don't notify the sender
+    allUserIds.delete(senderUserId);
 
-    for (const userId of userIdsToNotify) {
+    console.log('📍 Notifying', allUserIds.size, 'users about change to:', note.name);
+
+    for (const userId of allUserIds) {
       const { data: user } = await supabase
         .from('users')
         .select('push_token')
         .eq('id', userId)
         .single();
       if (user?.push_token) {
+        // Creator goes to home, assigned users go to assigned-notes
+        const screen = (userId === note.creator_id) ? 'home' : 'assigned-notes';
         await sendPushNotification(
           user.push_token,
           `Update: ${note.name}`,
           `${senderName} ${changeDescription}`,
-          { screen: 'assigned-notes', noteId: noteId }
+          { screen, noteId: noteId }
         );
       }
     }
