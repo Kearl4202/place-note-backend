@@ -204,7 +204,7 @@ router.get('/assigned-to-me', authenticateToken, async (req, res) => {
 
     const { data: notes, error } = await supabase
       .from('place_notes')
-      .select(`*, users!place_notes_creator_id_fkey (name)`)
+      .select(`*, users!place_notes_creator_id_fkey (name), projects (name)`)
       .in('id', Array.from(assignedNoteIds))
       .eq('status', 'active')
       .order('created_at', { ascending: false });
