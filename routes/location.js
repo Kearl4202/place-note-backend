@@ -132,19 +132,24 @@ router.post('/check', authenticateToken, async (req, res) => {
     if (notifiedNotes.length > 0) {
       const { data: user } = await supabase
         .from('users')
-        .select('push_token')
+        .select('push_token, notification_prefs')
         .eq('id', userId)
         .single();
 
       if (user?.push_token) {
-        for (const note of notifiedNotes) {
-          console.log('📍 User entered perimeter of:', note.name);
-          await sendPushNotification(
-            user.push_token,
-            '📍 You arrived at a Place Note!',
-            `You're near "${note.name}" — tap to check it out`,
-            { screen: 'assigned-notes', noteId: note.id }
-          );
+        var prefs = user.notification_prefs || { geofence: true, tags: true, contacts: true };
+        if (prefs.geofence === false) {
+          console.log('Skipping geofence notification for', userId, '- geofence notifications disabled');
+        } else {
+          for (const note of notifiedNotes) {
+            console.log('📍 User entered perimeter of:', note.name);
+            await sendPushNotification(
+              user.push_token,
+              '📍 You arrived at a Place Note!',
+              `You're near "${note.name}" — tap to check it out`,
+              { screen: 'assigned-notes', noteId: note.id }
+            );
+          }
         }
       }
     }
