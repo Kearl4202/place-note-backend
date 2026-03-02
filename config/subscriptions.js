@@ -91,7 +91,7 @@ async function getUserSubscriptionInfo(userId) {
     const { count: projectsCount } = await supabase
       .from('projects')
       .select('*', { count: 'exact', head: true })
-      .eq('owner_id', userId);
+      .eq('owner_id', userId)
     .neq('name', 'Personal');
 
     return {
