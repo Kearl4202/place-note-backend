@@ -34,8 +34,19 @@ router.get('/', authenticateToken, async (req, res) => {
           .from('contact_groups')
           .select('group_id')
           .eq('contact_id', contact.id);
+        // Fetch profile pic from users table if contact has a linked user
+        var profilePic = null;
+        if (contact.contact_user_id) {
+          const { data: linkedUser } = await supabase
+            .from('users')
+            .select('profile_pic')
+            .eq('id', contact.contact_user_id)
+            .single();
+          profilePic = linkedUser?.profile_pic || null;
+        }
         return {
           ...contact,
+          profile_pic: profilePic,
           groups: (groupMemberships || []).map(m => m.group_id)
         };
       })
