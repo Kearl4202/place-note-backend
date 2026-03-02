@@ -34,19 +34,26 @@ router.get('/', authenticateToken, async (req, res) => {
           .from('contact_groups')
           .select('group_id')
           .eq('contact_id', contact.id);
-        // Fetch profile pic from users table if contact has a linked user
-        var profilePic = null;
+        // Fetch latest user info if contact has a linked user
+        var latestInfo = {};
         if (contact.contact_user_id) {
           const { data: linkedUser } = await supabase
             .from('users')
-            .select('profile_pic')
+            .select('name, email, phone, profile_pic')
             .eq('id', contact.contact_user_id)
             .single();
-          profilePic = linkedUser?.profile_pic || null;
+          if (linkedUser) {
+            latestInfo = {
+              name: linkedUser.name || contact.name,
+              email: linkedUser.email || contact.email,
+              phone: linkedUser.phone || contact.phone,
+              profile_pic: linkedUser.profile_pic || null
+            };
+          }
         }
         return {
           ...contact,
-          profile_pic: profilePic,
+          ...latestInfo,
           groups: (groupMemberships || []).map(m => m.group_id)
         };
       })
