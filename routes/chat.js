@@ -94,10 +94,16 @@ const notifyAssignedUsersAboutChange = async (noteId, senderUserId, changeDescri
     for (var notifyUserId of allUserIds) {
       const { data: user } = await supabase
         .from('users')
-        .select('push_token')
+        .select('push_token, notification_prefs')
         .eq('id', notifyUserId)
         .single();
       if (user && user.push_token) {
+        // Check notification preferences
+        var prefs = user.notification_prefs || { geofence: true, tags: true, contacts: true };
+        if (prefs.tags === false) {
+          console.log('Skipping notification for', notifyUserId, '- tags notifications disabled');
+          continue;
+        }
         var isCreator = String(notifyUserId) === String(creatorId);
         var screen = isCreator ? 'home' : 'assigned-notes';
         console.log('Sending to', notifyUserId, 'screen:', screen, 'isCreator:', isCreator);
