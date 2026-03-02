@@ -61,7 +61,7 @@ router.get('/requests', authenticateToken, async (req, res) => {
       (requests || []).map(async (request) => {
         const { data: requester } = await supabase
           .from('users')
-          .select('id, name, email, phone')
+          .select('id, name, email, phone, profile_pic')
           .eq('id', request.user_id)
           .single();
         return {
@@ -90,7 +90,7 @@ router.get('/search', authenticateToken, async (req, res) => {
     }
     const { data: users, error } = await supabase
       .from('users')
-      .select('id, name, email, phone')
+      .select('id, name, email, phone, profile_pic')
       .or(`email.ilike.%${query.trim()}%,phone.ilike.%${query.trim()}%`)
       .neq('id', userId)
       .limit(10);
@@ -141,7 +141,7 @@ router.post('/', authenticateToken, async (req, res) => {
     if (contact_user_id) {
       const { data: addedUser } = await supabase
         .from('users')
-        .select('push_token')
+        .select('push_token, notification_prefs')
         .eq('id', contact_user_id)
         .single();
 
@@ -152,12 +152,15 @@ router.post('/', authenticateToken, async (req, res) => {
         .single();
 
       if (addedUser?.push_token) {
-        await sendPushNotification(
-          addedUser.push_token,
-          'New Contact Request',
-          `${requestingUser.name} wants to add you as a contact`,
-          { screen: 'contacts' }
-        );
+        var prefs = addedUser.notification_prefs || { geofence: true, tags: true, contacts: true };
+        if (prefs.contacts !== false) {
+          await sendPushNotification(
+            addedUser.push_token,
+            'New Contact Request',
+            `${requestingUser.name} wants to add you as a contact`,
+            { screen: 'contacts' }
+          );
+        }
       }
     }
 
@@ -194,7 +197,7 @@ router.put('/:id/accept', authenticateToken, async (req, res) => {
 
     const { data: requesterUser } = await supabase
       .from('users')
-      .select('push_token')
+      .select('push_token, notification_prefs')
       .eq('id', contact.user_id)
       .single();
 
@@ -205,12 +208,15 @@ router.put('/:id/accept', authenticateToken, async (req, res) => {
       .single();
 
     if (requesterUser?.push_token) {
-      await sendPushNotification(
-        requesterUser.push_token,
-        'Contact Accepted!',
-        `${acceptingUser.name} accepted your contact request`,
-        { screen: 'contacts' }
-      );
+      var prefs = requesterUser.notification_prefs || { geofence: true, tags: true, contacts: true };
+      if (prefs.contacts !== false) {
+        await sendPushNotification(
+          requesterUser.push_token,
+          'Contact Accepted!',
+          `${acceptingUser.name} accepted your contact request`,
+          { screen: 'contacts' }
+        );
+      }
     }
 
     res.json({ message: 'Contact request accepted' });
