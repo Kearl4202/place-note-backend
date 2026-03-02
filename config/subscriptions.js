@@ -92,6 +92,7 @@ async function getUserSubscriptionInfo(userId) {
       .from('projects')
       .select('*', { count: 'exact', head: true })
       .eq('owner_id', userId);
+    .neq('name', 'Personal');
 
     return {
       user: {
