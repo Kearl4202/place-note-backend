@@ -349,4 +349,127 @@ router.post('/push-token', authenticateToken, async function(req, res) {
   }
 });
 
+// Get profile
+router.get('/profile', authenticateToken, async function(req, res) {
+  try {
+    var { data: user, error } = await supabase
+      .from('users')
+      .select('id, email, name, phone, email_verified, profile_pic')
+      .eq('id', req.user.userId)
+      .single();
+    if (error || !user) return res.status(404).json({ error: 'User not found' });
+    res.json({ user: user });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch profile' });
+  }
+});
+
+// Update profile
+router.put('/profile', authenticateToken, async function(req, res) {
+  try {
+    var name = req.body.name;
+    var phone = req.body.phone;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+    var { data: user, error } = await supabase
+      .from('users')
+      .update({ name: name.trim(), phone: (phone || '').trim() })
+      .eq('id', req.user.userId)
+      .select('id, email, name, phone, email_verified, profile_pic')
+      .single();
+    if (error) throw error;
+    res.json({ user: user, message: 'Profile updated' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+// Upload profile pic
+var multer = require('multer');
+var upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+router.post('/profile-pic', authenticateToken, upload.single('file'), async function(req, res) {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file provided' });
+    var userId = req.user.userId;
+    var fileName = 'profile-pics/' + userId + '_' + Date.now() + '.jpg';
+    var { error: uploadError } = await supabase.storage
+      .from('place-note-files')
+      .upload(fileName, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (uploadError) throw uploadError;
+    var { data: urlData } = supabase.storage.from('place-note-files').getPublicUrl(fileName);
+    var profilePicUrl = urlData.publicUrl;
+    await supabase.from('users').update({ profile_pic: profilePicUrl }).eq('id', userId);
+    res.json({ profile_pic: profilePicUrl, message: 'Profile photo updated' });
+  } catch (error) {
+    console.error('Error uploading profile pic:', error);
+    res.status(500).json({ error: 'Failed to upload profile photo' });
+  }
+});
+
+// Change password
+router.put('/change-password', authenticateToken, async function(req, res) {
+  try {
+    var currentPassword = req.body.current_password;
+    var newPassword = req.body.new_password;
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Current and new password are required' });
+    if (newPassword.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    var { data: user, error } = await supabase.from('users').select('password').eq('id', req.user.userId).single();
+    if (error || !user) return res.status(404).json({ error: 'User not found' });
+    var valid = await bcrypt.compare(currentPassword, user.password);
+    if (!valid) return res.status(400).json({ error: 'Current password is incorrect' });
+    var hashed = await bcrypt.hash(newPassword, 10);
+    await supabase.from('users').update({ password: hashed }).eq('id', req.user.userId);
+    res.json({ message: 'Password changed successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+// Get notification preferences
+router.get('/notification-prefs', authenticateToken, async function(req, res) {
+  try {
+    var { data: user } = await supabase.from('users').select('notification_prefs').eq('id', req.user.userId).single();
+    res.json({ prefs: user?.notification_prefs || { geofence: true, tags: true, contacts: true } });
+  } catch (error) {
+    res.json({ prefs: { geofence: true, tags: true, contacts: true } });
+  }
+});
+
+// Update notification preferences
+router.put('/notification-prefs', authenticateToken, async function(req, res) {
+  try {
+    var prefs = { geofence: req.body.geofence !== false, tags: req.body.tags !== false, contacts: req.body.contacts !== false };
+    await supabase.from('users').update({ notification_prefs: prefs }).eq('id', req.user.userId);
+    res.json({ prefs: prefs, message: 'Notification preferences updated' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update notification preferences' });
+  }
+});
+
+// Delete account
+router.delete('/account', authenticateToken, async function(req, res) {
+  try {
+    var userId = req.user.userId;
+    // Delete user's chat messages
+    await supabase.from('chat').delete().eq('user_id', userId);
+    // Delete user's assignments
+    await supabase.from('assignments').delete().eq('user_id', userId);
+    // Delete user's place notes
+    await supabase.from('place_notes').delete().eq('creator_id', userId);
+    // Delete user's contacts
+    await supabase.from('contacts').delete().eq('user_id', userId);
+    await supabase.from('contacts').delete().eq('contact_user_id', userId);
+    // Delete note_last_seen
+    await supabase.from('note_last_seen').delete().eq('user_id', userId);
+    // Delete geofence notifications
+    await supabase.from('geofence_notifications').delete().eq('user_id', userId);
+    // Delete user
+    await supabase.from('users').delete().eq('id', userId);
+    res.json({ message: 'Account deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting account:', error);
+    res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
 module.exports = router;
