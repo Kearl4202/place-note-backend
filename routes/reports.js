@@ -244,11 +244,25 @@ router.get('/:noteId', authenticateToken, async function(req, res) {
           // Text message
           doc.fontSize(10).font('Helvetica').fillColor('#374151').text(msg.content || '', contentX, doc.y, { width: pageWidth - 35 });
         } else if (msgType === 'photo') {
-          // Photo attachment
+          // Photo attachment - try to embed actual image
           var photoFileName = getFileNameFromUrl(msg.file_url);
           var photoFileType = getFileTypeLabel(msg.file_url);
-          doc.fontSize(10).font('Helvetica').fillColor('#10B981').text('📷 ' + photoFileType, contentX, doc.y, { width: pageWidth - 35 });
-          doc.fontSize(9).font('Helvetica').fillColor('#6B7280').text('File: ' + photoFileName, contentX, doc.y, { width: pageWidth - 35 });
+          doc.fontSize(10).font('Helvetica').fillColor('#10B981').text('📷 ' + photoFileType + ' - ' + photoFileName, contentX, doc.y, { width: pageWidth - 35 });
+          if (msg.file_url) {
+            try {
+              var imgResponse = await axios.get(msg.file_url, { responseType: 'arraybuffer', timeout: 10000 });
+              var imgBuffer = Buffer.from(imgResponse.data);
+              // Check if we need a new page for the image
+              if (doc.y > 400) {
+                doc.addPage();
+              }
+              var imgY = doc.y;
+              doc.image(imgBuffer, contentX, imgY, { fit: [380, 280] });
+              doc.y = imgY + 285;
+            } catch (imgErr) {
+              doc.fontSize(8).font('Helvetica').fillColor('#9CA3AF').text('(Image could not be loaded)', contentX, doc.y, { width: pageWidth - 35 });
+            }
+          }
           if (msg.content) {
             doc.fontSize(9).font('Helvetica').fillColor('#374151').text('Caption: ' + msg.content, contentX, doc.y, { width: pageWidth - 35 });
           }
