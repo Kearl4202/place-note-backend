@@ -34,6 +34,8 @@ router.post('/check', authenticateToken, async (req, res) => {
     const userId = req.user.userId;
     const { latitude, longitude } = req.body;
 
+    console.log('📍 Location check from user:', userId, 'at', latitude, longitude);
+
     if (!latitude || !longitude) {
       return res.status(400).json({ error: 'latitude and longitude are required' });
     }
@@ -76,6 +78,7 @@ router.post('/check', authenticateToken, async (req, res) => {
     }
 
     if (assignedNoteIds.size === 0) {
+      console.log('📍 No assigned notes for user:', userId);
       return res.json({ inside: [], message: 'No assigned notes' });
     }
 
@@ -86,8 +89,11 @@ router.post('/check', authenticateToken, async (req, res) => {
       .eq('status', 'active');
 
     if (!notes || notes.length === 0) {
+      console.log('📍 No active assigned notes for user:', userId);
       return res.json({ inside: [], message: 'No active assigned notes' });
     }
+
+    console.log('📍 Checking', notes.length, 'notes for user:', userId);
 
     const insideNotes = [];
     const outsideNoteIds = [];
@@ -97,6 +103,7 @@ router.post('/check', authenticateToken, async (req, res) => {
         latitude, longitude,
         parseFloat(note.latitude), parseFloat(note.longitude)
       );
+      console.log('📍 Distance to', note.name, ':', Math.round(dist), 'ft, perimeter:', note.perimeter_feet, 'ft');
       if (dist <= note.perimeter_feet) {
         insideNotes.push(note);
       } else {
