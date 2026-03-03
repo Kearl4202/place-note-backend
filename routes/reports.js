@@ -92,7 +92,7 @@ router.get('/:noteId', authenticateToken, async function(req, res) {
       .from('chat')
       .select('*, users!chat_user_id_fkey(name)')
       .eq('place_note_id', noteId)
-      .order('created_at', { ascending: true });
+      .order('timestamp', { ascending: true });
 
     console.log('Chat messages found:', chatMessages?.length || 0, 'Error:', chatError?.message || 'none');
 
@@ -211,7 +211,7 @@ router.get('/:noteId', authenticateToken, async function(req, res) {
       for (var i = 0; i < chatMessages.length; i++) {
         var msg = chatMessages[i];
         var senderName = msg.users?.name || 'Unknown';
-        var timestamp = new Date(msg.created_at + 'Z').toLocaleDateString('en-US', {
+        var timestamp = new Date(msg.timestamp + 'Z').toLocaleDateString('en-US', {
           year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
         });
         var msgType = msg.message_type || 'text';
@@ -304,7 +304,7 @@ router.get('/:noteId', authenticateToken, async function(req, res) {
         var att = attachments[j];
         var attName = getFileNameFromUrl(att.file_url);
         var attType = getFileTypeLabel(att.file_url);
-        var attDate = new Date(att.created_at + 'Z').toLocaleDateString('en-US', {
+        var attDate = new Date(att.timestamp + 'Z').toLocaleDateString('en-US', {
           year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
         });
         var attSender = att.users?.name || 'Unknown';
