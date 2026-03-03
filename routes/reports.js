@@ -230,7 +230,7 @@ router.get('/:noteId', authenticateToken, async function(req, res) {
 
         doc.circle(dotX, dotY, 4).fill(dotColor);
         if (i < chatMessages.length - 1) {
-          doc.moveTo(dotX, dotY + 4).lineTo(dotX, dotY + 45).stroke('#E5E7EB');
+          doc.moveTo(dotX, dotY + 4).lineTo(dotX, dotY + 35).stroke('#E5E7EB');
         }
 
         // Sender and timestamp
@@ -246,25 +246,25 @@ router.get('/:noteId', authenticateToken, async function(req, res) {
         } else if (msgType === 'photo') {
           // Photo attachment - try to embed actual image
           var photoFileName = getFileNameFromUrl(msg.file_url);
-          var photoFileType = getFileTypeLabel(msg.file_url);
-          doc.fontSize(10).font('Helvetica').fillColor('#10B981').text('📷 ' + photoFileType + ' - ' + photoFileName, contentX, doc.y, { width: pageWidth - 35 });
+          doc.fontSize(9).font('Helvetica').fillColor('#10B981').text('📷 ' + photoFileName, contentX, doc.y, { width: pageWidth - 35 });
           if (msg.file_url) {
             try {
               var imgResponse = await axios.get(msg.file_url, { responseType: 'arraybuffer', timeout: 10000 });
               var imgBuffer = Buffer.from(imgResponse.data);
-              // Check if we need a new page for the image
-              if (doc.y > 400) {
+              doc.moveDown(0.3);
+              // If less than 200px space left, go to next page
+              if (doc.y > 550) {
                 doc.addPage();
               }
               var imgY = doc.y;
-              doc.image(imgBuffer, contentX, imgY, { fit: [380, 280] });
-              doc.y = imgY + 285;
+              doc.image(imgBuffer, contentX, imgY, { fit: [300, 220] });
+              doc.y = imgY + 225;
             } catch (imgErr) {
               doc.fontSize(8).font('Helvetica').fillColor('#9CA3AF').text('(Image could not be loaded)', contentX, doc.y, { width: pageWidth - 35 });
             }
           }
           if (msg.content) {
-            doc.fontSize(9).font('Helvetica').fillColor('#374151').text('Caption: ' + msg.content, contentX, doc.y, { width: pageWidth - 35 });
+            doc.fontSize(9).font('Helvetica').fillColor('#374151').text(msg.content, contentX, doc.y, { width: pageWidth - 35 });
           }
         } else if (msgType === 'document') {
           // Document attachment
@@ -288,7 +288,7 @@ router.get('/:noteId', authenticateToken, async function(req, res) {
           }
         }
 
-        doc.moveDown(1.2);
+        doc.moveDown(0.8);
       }
     }
 
