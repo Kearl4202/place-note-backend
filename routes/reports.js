@@ -9,6 +9,7 @@ const axios = require('axios');
 // Generate PDF report for a place note
 router.get('/:noteId', authenticateToken, async function(req, res) {
   try {
+    console.log('Report requested for note:', req.params.noteId, 'by user:', req.user.userId);
     var userId = req.user.userId;
     var noteId = req.params.noteId;
 
