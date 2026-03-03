@@ -171,4 +171,84 @@ router.post('/check', authenticateToken, async (req, res) => {
   }
 });
 
+// New endpoint: called when native OS geofence triggers an ENTER event
+router.post('/geofence-enter', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { noteId } = req.body;
+
+    console.log('📍 Native geofence ENTER for note:', noteId, 'by user:', userId);
+
+    if (!noteId) {
+      return res.status(400).json({ error: 'noteId is required' });
+    }
+
+    // Fetch the place note
+    const { data: note } = await supabase
+      .from('place_notes')
+      .select('id, name, creator_id')
+      .eq('id', noteId)
+      .eq('status', 'active')
+      .single();
+
+    if (!note) {
+      return res.json({ notified: false, message: 'Note not found or inactive' });
+    }
+
+    // Check if already notified recently (prevent spam)
+    const { data: existing } = await supabase
+      .from('geofence_notifications')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('place_note_id', noteId)
+      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+
+    if (existing && existing.length > 0) {
+      console.log('📍 Already notified for', note.name, 'within 24 hours, skipping');
+      return res.json({ notified: false, message: 'Already notified recently' });
+    }
+
+    // Get user's push token and notification prefs
+    const { data: user } = await supabase
+      .from('users')
+      .select('push_token, notification_prefs')
+      .eq('id', userId)
+      .single();
+
+    if (!user || !user.push_token) {
+      return res.json({ notified: false, message: 'No push token' });
+    }
+
+    // Check notification preferences
+    const prefs = user.notification_prefs || { geofence: true, tags: true, contacts: true };
+    if (!prefs.geofence) {
+      console.log('📍 User has geofence notifications disabled, skipping');
+      return res.json({ notified: false, message: 'Geofence notifications disabled' });
+    }
+
+    // Send push notification
+    await sendPushNotification(
+      user.push_token,
+      '📍 You arrived at a Place Note!',
+      `You are near "${note.name}"`,
+      { screen: 'assigned-notes', noteId: note.id }
+    );
+
+    // Record the notification
+    await supabase
+      .from('geofence_notifications')
+      .insert({
+        user_id: userId,
+        place_note_id: noteId,
+      });
+
+    console.log('📍 Geofence notification sent for:', note.name);
+    return res.json({ notified: true, noteName: note.name });
+
+  } catch (error) {
+    console.error('Error in geofence-enter:', error);
+    res.status(500).json({ error: 'Failed to process geofence enter' });
+  }
+});
+
 module.exports = router;
