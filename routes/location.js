@@ -171,6 +171,84 @@ router.post('/check', authenticateToken, async (req, res) => {
   }
 });
 
+// Endpoint for app to fetch geofence regions and log registration
+router.post('/geofence-register', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    console.log('📍 Geofence register request from user:', userId);
+
+    // Fetch assigned notes
+    const { data: myContacts } = await supabase
+      .from('contacts')
+      .select('id')
+      .eq('contact_user_id', userId)
+      .eq('status', 'active');
+    const myContactIds = (myContacts || []).map(c => c.id);
+
+    let assignedNoteIds = new Set();
+    if (myContactIds.length > 0) {
+      const { data: directAssignments } = await supabase
+        .from('assignments')
+        .select('place_note_id')
+        .in('user_id', myContactIds);
+      for (const a of directAssignments || []) {
+        assignedNoteIds.add(a.place_note_id);
+      }
+
+      const { data: myGroupMemberships } = await supabase
+        .from('contact_groups')
+        .select('group_id')
+        .in('contact_id', myContactIds);
+      const myGroupIds = (myGroupMemberships || []).map(m => m.group_id);
+
+      if (myGroupIds.length > 0) {
+        const { data: groupAssignments } = await supabase
+          .from('assignments')
+          .select('place_note_id')
+          .in('group_id', myGroupIds);
+        for (const a of groupAssignments || []) {
+          assignedNoteIds.add(a.place_note_id);
+        }
+      }
+    }
+
+    // Fetch user's own notes
+    const { data: myNotes } = await supabase
+      .from('place_notes')
+      .select('id, name, latitude, longitude, perimeter_feet, status')
+      .eq('creator_id', userId)
+      .eq('status', 'active');
+
+    // Fetch assigned notes details
+    let assignedNotes = [];
+    if (assignedNoteIds.size > 0) {
+      const { data: aNotes } = await supabase
+        .from('place_notes')
+        .select('id, name, latitude, longitude, perimeter_feet, status')
+        .in('id', Array.from(assignedNoteIds))
+        .eq('status', 'active');
+      assignedNotes = aNotes || [];
+    }
+
+    // Combine and deduplicate
+    const allNotes = [...assignedNotes, ...(myNotes || [])];
+    const uniqueNotes = allNotes.filter((note, index, self) =>
+      note.latitude && note.longitude && note.perimeter_feet &&
+      index === self.findIndex(n => n.id === note.id)
+    );
+
+    console.log('📍 Found', uniqueNotes.length, 'notes to geofence for user:', userId);
+    for (const n of uniqueNotes) {
+      console.log('📍  -', n.name, '(', n.latitude, ',', n.longitude, ') perimeter:', n.perimeter_feet, 'ft');
+    }
+
+    res.json({ regions: uniqueNotes });
+  } catch (error) {
+    console.error('📍 Error in geofence-register:', error);
+    res.status(500).json({ error: 'Failed to fetch geofence regions' });
+  }
+});
+
 // New endpoint: called when native OS geofence triggers an ENTER event
 router.post('/geofence-enter', authenticateToken, async (req, res) => {
   try {
