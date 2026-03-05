@@ -274,15 +274,26 @@ router.post('/geofence-enter', authenticateToken, async (req, res) => {
     }
 
     // Check if already notified recently (prevent spam)
+    // First clean up old notifications (older than 4 hours)
+    try {
+      await supabase
+        .from('geofence_notifications')
+        .delete()
+        .eq('user_id', userId)
+        .eq('place_note_id', noteId)
+        .lt('created_at', new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString());
+    } catch (cleanErr) {
+      // Ignore cleanup errors
+    }
+
     const { data: existing } = await supabase
       .from('geofence_notifications')
       .select('id')
       .eq('user_id', userId)
-      .eq('place_note_id', noteId)
-      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+      .eq('place_note_id', noteId);
 
     if (existing && existing.length > 0) {
-      console.log('📍 Already notified for', note.name, 'within 24 hours, skipping');
+      console.log('📍 Already notified for', note.name, ', skipping');
       return res.json({ notified: false, message: 'Already notified recently' });
     }
 
