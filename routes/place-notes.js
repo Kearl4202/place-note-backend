@@ -412,7 +412,7 @@ router.put('/:id/assignments', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const noteId = req.params.id;
-    const { contact_ids, group_ids } = req.body;
+    const { contact_ids, group_ids, self_assigned } = req.body;
 
     const { data: note, error: noteError } = await supabase
       .from('place_notes')
@@ -426,6 +426,17 @@ router.put('/:id/assignments', authenticateToken, async (req, res) => {
     }
 
     await supabase.from('assignments').delete().eq('place_note_id', noteId);
+
+    // Self-assign: creator assigns themselves
+    if (self_assigned) {
+      await supabase.from('assignments').insert({
+        place_note_id: noteId,
+        user_id: null,
+        group_id: null,
+        self_assigned: true,
+        self_user_id: userId,
+      });
+    }
 
     if (contact_ids && contact_ids.length > 0) {
       const contactAssignments = contact_ids.map(contactId => ({
