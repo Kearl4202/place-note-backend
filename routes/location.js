@@ -212,12 +212,24 @@ router.post('/geofence-register', authenticateToken, async (req, res) => {
       }
     }
 
-    // Fetch user's own notes
-    const { data: myNotes } = await supabase
-      .from('place_notes')
-      .select('id, name, latitude, longitude, perimeter_feet, status')
-      .eq('creator_id', userId)
-      .eq('status', 'active');
+    // Fetch user's own notes that are self-assigned
+    const { data: selfAssignments } = await supabase
+      .from('assignments')
+      .select('place_note_id')
+      .eq('self_assigned', true)
+      .eq('self_user_id', userId);
+    const selfAssignedNoteIds = new Set((selfAssignments || []).map(a => a.place_note_id));
+
+    let myNotes = [];
+    if (selfAssignedNoteIds.size > 0) {
+      const { data: sNotes } = await supabase
+        .from('place_notes')
+        .select('id, name, latitude, longitude, perimeter_feet, status')
+        .in('id', Array.from(selfAssignedNoteIds))
+        .eq('creator_id', userId)
+        .eq('status', 'active');
+      myNotes = sNotes || [];
+    }
 
     // Fetch assigned notes details
     let assignedNotes = [];
@@ -246,6 +258,90 @@ router.post('/geofence-register', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('📍 Error in geofence-register:', error);
     res.status(500).json({ error: 'Failed to fetch geofence regions' });
+  }
+});
+
+// Approach endpoint: 1-mile geofence triggered
+router.post('/geofence-approach', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { noteId } = req.body;
+
+    console.log('📍 Approach geofence for note:', noteId, 'by user:', userId);
+
+    if (!noteId) {
+      return res.status(400).json({ error: 'noteId is required' });
+    }
+
+    // Fetch the place note
+    const { data: note } = await supabase
+      .from('place_notes')
+      .select('id, name, creator_id, latitude, longitude')
+      .eq('id', noteId)
+      .eq('status', 'active')
+      .single();
+
+    if (!note) {
+      return res.json({ notified: false, message: 'Note not found or inactive' });
+    }
+
+    // Check user's approach notification preference
+    const { data: user } = await supabase
+      .from('users')
+      .select('push_token, notification_prefs')
+      .eq('id', userId)
+      .single();
+
+    if (!user || !user.push_token) {
+      return res.json({ notified: false, message: 'No push token' });
+    }
+
+    const prefs = user.notification_prefs || { geofence: true, tags: true, contacts: true, approach: true };
+    if (!prefs.approach) {
+      console.log('📍 User has approach notifications disabled, skipping');
+      return res.json({ notified: false, message: 'Approach notifications disabled' });
+    }
+
+    // Check duplicate (use approach_ prefix to separate from normal geofence)
+    const { data: existing } = await supabase
+      .from('geofence_notifications')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('place_note_id', noteId)
+      .eq('notification_type', 'approach');
+
+    if (existing && existing.length > 0) {
+      return res.json({ notified: false, message: 'Already notified' });
+    }
+
+    // Send approach notification
+    await sendPushNotification(
+      user.push_token,
+      '📍 Approaching a Place Note',
+      `You are about 1 mile from "${note.name}". Open app for directions.`,
+      { screen: 'approach-directions', noteId: note.id, latitude: note.latitude, longitude: note.longitude, noteName: note.name }
+    );
+
+    // Record notification
+    await supabase
+      .from('geofence_notifications')
+      .insert({
+        user_id: userId,
+        place_note_id: noteId,
+        notification_type: 'approach',
+      });
+
+    console.log('📍 Approach notification sent for:', note.name);
+    return res.json({
+      notified: true,
+      noteName: note.name,
+      latitude: parseFloat(note.latitude),
+      longitude: parseFloat(note.longitude),
+    });
+
+  } catch (error) {
+    console.error('Error in geofence-approach:', error);
+    res.status(500).json({ error: 'Failed to process approach' });
   }
 });
 
