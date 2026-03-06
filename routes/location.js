@@ -261,13 +261,13 @@ router.post('/geofence-register', authenticateToken, async (req, res) => {
   }
 });
 
-// Approach endpoint: 1-mile geofence triggered
-router.post('/geofence-approach', authenticateToken, async (req, res) => {
+// New endpoint: called when native OS geofence triggers an ENTER event
+router.post('/geofence-enter', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const { noteId } = req.body;
 
-    console.log('📍 Approach geofence for note:', noteId, 'by user:', userId);
+    console.log('📍 Native geofence ENTER for note:', noteId, 'by user:', userId);
 
     if (!noteId) {
       return res.status(400).json({ error: 'noteId is required' });
@@ -285,103 +285,17 @@ router.post('/geofence-approach', authenticateToken, async (req, res) => {
       return res.json({ notified: false, message: 'Note not found or inactive' });
     }
 
-    // Check user's approach notification preference
-    const { data: user } = await supabase
-      .from('users')
-      .select('push_token, notification_prefs')
-      .eq('id', userId)
-      .single();
-
-    if (!user || !user.push_token) {
-      return res.json({ notified: false, message: 'No push token' });
-    }
-
-    const prefs = user.notification_prefs || {};
-    if (prefs.approach === false) {
-      console.log('📍 User has approach notifications disabled, skipping');
-      return res.json({ notified: false, message: 'Approach notifications disabled' });
-    }
-
-    // Check duplicate (use approach_ prefix to separate from normal geofence)
-    const { data: existing } = await supabase
-      .from('geofence_notifications')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('place_note_id', noteId)
-      .eq('notification_type', 'approach');
-
-    if (existing && existing.length > 0) {
-      return res.json({ notified: false, message: 'Already notified' });
-    }
-
-    // Send approach notification
-    await sendPushNotification(
-      user.push_token,
-      '📍 Approaching a Place Note',
-      `You are about 1 mile from "${note.name}". Open app for directions.`,
-      { screen: 'approach-directions', noteId: note.id, latitude: note.latitude, longitude: note.longitude, noteName: note.name }
-    );
-
-    // Record notification
-    await supabase
-      .from('geofence_notifications')
-      .insert({
-        user_id: userId,
-        place_note_id: noteId,
-        notification_type: 'approach',
-      });
-
-    console.log('📍 Approach notification sent for:', note.name);
-    return res.json({
-      notified: true,
-      noteName: note.name,
-      latitude: parseFloat(note.latitude),
-      longitude: parseFloat(note.longitude),
-    });
-
-  } catch (error) {
-    console.error('Error in geofence-approach:', error);
-    res.status(500).json({ error: 'Failed to process approach' });
-  }
-});
-
-// New endpoint: called when native OS geofence triggers an ENTER event
-router.post('/geofence-enter', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const { noteId } = req.body;
-
-    console.log('📍 Native geofence ENTER for note:', noteId, 'by user:', userId);
-
-    if (!noteId) {
-      return res.status(400).json({ error: 'noteId is required' });
-    }
-
-    // Fetch the place note
-    const { data: note } = await supabase
-      .from('place_notes')
-      .select('id, name, creator_id')
-      .eq('id', noteId)
-      .eq('status', 'active')
-      .single();
-
-    if (!note) {
-      return res.json({ notified: false, message: 'Note not found or inactive' });
-    }
-
-    // Check if already notified recently (prevent spam)
-    // First clean up old notifications (older than 4 hours)
+    // Clean up old notifications (older than 4 hours) using notified_at
     try {
       await supabase
         .from('geofence_notifications')
         .delete()
         .eq('user_id', userId)
         .eq('place_note_id', noteId)
-        .lt('created_at', new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString());
-    } catch (cleanErr) {
-      // Ignore cleanup errors
-    }
+        .lt('notified_at', new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString());
+    } catch (cleanErr) {}
 
+    // Check if already notified
     const { data: existing } = await supabase
       .from('geofence_notifications')
       .select('id')
@@ -404,19 +318,22 @@ router.post('/geofence-enter', authenticateToken, async (req, res) => {
       return res.json({ notified: false, message: 'No push token' });
     }
 
-    // Check notification preferences
-    const prefs = user.notification_prefs || { geofence: true, tags: true, contacts: true };
-    if (!prefs.geofence) {
+    const prefs = user.notification_prefs || {};
+    if (prefs.geofence === false) {
       console.log('📍 User has geofence notifications disabled, skipping');
       return res.json({ notified: false, message: 'Geofence notifications disabled' });
     }
+
+    // Determine screen: creator goes to home, assigned users go to assigned-notes
+    const isCreator = note.creator_id === userId;
+    const screen = isCreator ? 'home' : 'assigned-notes';
 
     // Send push notification
     await sendPushNotification(
       user.push_token,
       '📍 You arrived at a Place Note!',
       `You are near "${note.name}"`,
-      { screen: 'assigned-notes', noteId: note.id }
+      { screen: screen, noteId: note.id }
     );
 
     // Record the notification
@@ -427,7 +344,7 @@ router.post('/geofence-enter', authenticateToken, async (req, res) => {
         place_note_id: noteId,
       });
 
-    console.log('📍 Geofence notification sent for:', note.name);
+    console.log('📍 Geofence notification sent for:', note.name, '(screen:', screen, ')');
     return res.json({ notified: true, noteName: note.name });
 
   } catch (error) {
