@@ -296,8 +296,8 @@ router.post('/geofence-approach', authenticateToken, async (req, res) => {
       return res.json({ notified: false, message: 'No push token' });
     }
 
-    const prefs = user.notification_prefs || { geofence: true, tags: true, contacts: true, approach: true };
-    if (!prefs.approach) {
+    const prefs = user.notification_prefs || {};
+    if (prefs.approach === false) {
       console.log('📍 User has approach notifications disabled, skipping');
       return res.json({ notified: false, message: 'Approach notifications disabled' });
     }
