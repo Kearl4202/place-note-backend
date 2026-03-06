@@ -78,7 +78,7 @@ const notifyAssignedUsers = async (noteId, noteName, creatorId, title, message, 
 
 router.post('/', authenticateToken, async (req, res) => {
   try {
-    const { name, description, latitude, longitude, perimeter_feet, assigned_contacts, assigned_groups, project_id } = req.body;
+    const { name, description, latitude, longitude, perimeter_feet, assigned_contacts, assigned_groups, self_assigned, project_id } = req.body;
     const userId = req.user.userId;
 
     const limitCheck = await checkSubscriptionLimit(userId, 'notes');
@@ -132,6 +132,17 @@ router.post('/', authenticateToken, async (req, res) => {
         `${creator?.name || 'Someone'} assigned you to "${data.name}"`,
         'assigned-notes'
       );
+    }
+
+    // Self-assign: creator assigns themselves for geofence notifications
+    if (self_assigned) {
+      await supabase.from('assignments').insert({
+        place_note_id: data.id,
+        user_id: null,
+        group_id: null,
+        self_assigned: true,
+        self_user_id: userId,
+      });
     }
 
     res.status(201).json({ message: 'Place note created successfully', placeNote: data });
