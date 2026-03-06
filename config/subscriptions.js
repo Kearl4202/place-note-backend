@@ -43,10 +43,10 @@ const SUBSCRIPTION_TIERS = {
     description: 'Full access to all features',
     features: ['Everything in Inspector', 'Unlimited projects', 'Priority support'],
     limits: {
-      notes: 500,
+      notes: 50,
       contacts: 500,
-      groups: 50,
-      projects: 20
+      groups: 10,
+      projects: 10
     }
   }
 };
@@ -92,7 +92,7 @@ async function getUserSubscriptionInfo(userId) {
       .from('projects')
       .select('*', { count: 'exact', head: true })
       .eq('owner_id', userId)
-    .neq('name', 'Personal');
+      .neq('name', 'Personal');
 
     return {
       user: {
