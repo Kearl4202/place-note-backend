@@ -233,7 +233,7 @@ router.get('/assignments/:noteId', authenticateToken, async (req, res) => {
     const noteId = req.params.noteId;
     const { data, error } = await supabase
       .from('assignments')
-      .select('id, user_id, group_id')
+      .select('id, user_id, group_id, self_assigned, self_user_id')
       .eq('place_note_id', noteId);
     if (error) throw error;
 
