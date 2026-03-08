@@ -108,35 +108,34 @@ async function handleDowngrade(userId, newTier) {
       }
     }
 
-    // 4. Deactivate excess Contacts (newest first)
+    // 4. Contacts: DON'T auto-deactivate — give 7-day grace period
     const { data: contacts } = await supabase
       .from('contacts')
-      .select('id, contact_user_id, created_at')
+      .select('id')
       .eq('user_id', userId)
-      .eq('status', 'active')
-      .order('created_at', { ascending: false });
+      .eq('status', 'active');
 
-    if (contacts && contacts.length > limits.contacts) {
-      const toDeactivate = contacts.slice(limits.contacts);
-      for (const contact of toDeactivate) {
-        await supabase
-          .from('contacts')
-          .update({ status: 'inactive' })
-          .eq('id', contact.id);
+    const contactCount = contacts ? contacts.length : 0;
+    const overLimit = contactCount > limits.contacts;
 
-        // Get contact name for notification
-        const { data: contactUser } = await supabase
-          .from('users')
-          .select('name')
-          .eq('id', contact.contact_user_id)
-          .single();
+    if (overLimit) {
+      // Store the grace period deadline in the user record
+      const graceDeadline = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      await supabase
+        .from('users')
+        .update({ contact_grace_deadline: graceDeadline })
+        .eq('id', userId);
 
-        results.deactivated.push(contactUser?.name || 'Unknown contact');
-      }
+      results.contactGrace = {
+        current: contactCount,
+        limit: limits.contacts,
+        deadline: graceDeadline,
+        excess: contactCount - limits.contacts,
+      };
     }
 
     // Send notification to user about changes
-    if (results.archived.length > 0 || results.deactivated.length > 0) {
+    if (results.archived.length > 0 || results.contactGrace) {
       const { data: user } = await supabase
         .from('users')
         .select('push_token')
@@ -148,8 +147,8 @@ async function handleDowngrade(userId, newTier) {
         if (results.archived.length > 0) {
           message += `${results.archived.length} item(s) were archived. `;
         }
-        if (results.deactivated.length > 0) {
-          message += `${results.deactivated.length} contact(s) were deactivated. `;
+        if (results.contactGrace) {
+          message += `You have ${results.contactGrace.current} contacts but your new plan allows ${results.contactGrace.limit}. You have 7 days to choose which contacts to keep before the oldest are automatically deactivated. `;
         }
         message += 'Open the app to review.';
 
@@ -157,7 +156,7 @@ async function handleDowngrade(userId, newTier) {
           user.push_token,
           '📋 Subscription Updated',
           message,
-          { screen: 'home' }
+          { screen: 'contacts' }
         );
       }
     }
@@ -272,6 +271,69 @@ async function archiveCleanup() {
       console.log(`🗑️ Deleted ${expiredNotes.length} expired archived notes`);
     } else {
       console.log('🗑️ No expired archived notes to delete');
+    }
+
+    // 3. Enforce contact grace periods that have expired
+    console.log('👥 Checking expired contact grace periods...');
+    const { data: graceUsers } = await supabase
+      .from('users')
+      .select('id, subscription_tier, contact_grace_deadline, push_token')
+      .not('contact_grace_deadline', 'is', null)
+      .lt('contact_grace_deadline', now.toISOString());
+
+    if (graceUsers && graceUsers.length > 0) {
+      for (const graceUser of graceUsers) {
+        const limits = TIER_LIMITS[graceUser.subscription_tier] || TIER_LIMITS['The Viewer'];
+
+        // Get active contacts ordered by oldest first
+        const { data: contacts } = await supabase
+          .from('contacts')
+          .select('id, contact_user_id')
+          .eq('user_id', graceUser.id)
+          .eq('status', 'active')
+          .order('created_at', { ascending: true });
+
+        if (contacts && contacts.length > limits.contacts) {
+          // Deactivate oldest contacts (keep the latest ones)
+          const toDeactivate = contacts.slice(0, contacts.length - limits.contacts);
+          let deactivatedCount = 0;
+
+          for (const contact of toDeactivate) {
+            await supabase
+              .from('contacts')
+              .update({ status: 'inactive' })
+              .eq('id', contact.id);
+            deactivatedCount++;
+          }
+
+          // Clear the grace deadline
+          await supabase
+            .from('users')
+            .update({ contact_grace_deadline: null })
+            .eq('id', graceUser.id);
+
+          // Notify user
+          if (graceUser.push_token) {
+            await sendPushNotification(
+              graceUser.push_token,
+              '👥 Contacts Deactivated',
+              `${deactivatedCount} oldest contact(s) were deactivated because the 7-day grace period expired. You can reactivate them by upgrading your plan.`,
+              { screen: 'contacts' }
+            );
+          }
+
+          console.log(`👥 Deactivated ${deactivatedCount} contacts for user ${graceUser.id} (grace expired)`);
+        } else {
+          // Under limit now — just clear the deadline
+          await supabase
+            .from('users')
+            .update({ contact_grace_deadline: null })
+            .eq('id', graceUser.id);
+          console.log(`👥 User ${graceUser.id} is now under contact limit, cleared grace period`);
+        }
+      }
+    } else {
+      console.log('👥 No expired contact grace periods');
     }
 
   } catch (error) {
