@@ -179,6 +179,11 @@ async function checkSubscriptionLimit(userId, resourceType) {
       query = query.eq('status', 'active');
     }
 
+    // Exclude Personal project from count (everyone gets it free)
+    if (resourceType === 'projects') {
+      query = query.neq('name', 'Personal');
+    }
+
     const { count, error: countError } = await query;
 
     if (countError) throw countError;
