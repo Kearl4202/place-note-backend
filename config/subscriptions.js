@@ -44,7 +44,7 @@ const SUBSCRIPTION_TIERS = {
     features: ['Everything in Inspector', 'Unlimited projects', 'Priority support'],
     limits: {
       notes: 50,
-      contacts: 500,
+      contacts: 250,
       groups: 10,
       projects: 10
     }
