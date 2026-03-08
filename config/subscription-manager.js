@@ -21,7 +21,7 @@ const TIER_LIMITS = {
   'The Viewer': { notes: 5, contacts: 5, groups: 0, projects: 0 },
   'The Notifier': { notes: 10, contacts: 20, groups: 2, projects: 0 },
   'The Inspector': { notes: 20, contacts: 50, groups: 5, projects: 2 },
-  'The Chief': { notes: 50, contacts: 500, groups: 10, projects: 10 },
+  'The Chief': { notes: 50, contacts: 250, groups: 10, projects: 10 },
 };
 
 // ============================================================
