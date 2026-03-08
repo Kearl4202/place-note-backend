@@ -15,6 +15,7 @@ const contactRoutes = require('./routes/contacts');
 const groupRoutes = require('./routes/groups');
 const projectRoutes = require('./routes/projects');
 const chatRoutes = require('./routes/chat');
+const { startCronJobs } = require('./config/cron');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
@@ -35,3 +36,4 @@ app.listen(PORT, () => {
   console.log('Server running on port ' + PORT);
   console.log('Place Note Backend API');
 });
+startCronJobs();
