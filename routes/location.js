@@ -11,6 +11,8 @@ const sendPushNotification = async (pushToken, title, body, data = {}) => {
       title,
       body,
       sound: 'default',
+      channelId: 'default',
+      priority: 'high',
       data,
     });
   } catch (error) {
@@ -171,13 +173,11 @@ router.post('/check', authenticateToken, async (req, res) => {
   }
 });
 
-// Endpoint for app to fetch geofence regions and log registration
 router.post('/geofence-register', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     console.log('📍 Geofence register request from user:', userId);
 
-    // Fetch assigned notes
     const { data: myContacts } = await supabase
       .from('contacts')
       .select('id')
@@ -212,7 +212,6 @@ router.post('/geofence-register', authenticateToken, async (req, res) => {
       }
     }
 
-    // Fetch user's own notes that are self-assigned
     const { data: selfAssignments } = await supabase
       .from('assignments')
       .select('place_note_id')
@@ -231,7 +230,6 @@ router.post('/geofence-register', authenticateToken, async (req, res) => {
       myNotes = sNotes || [];
     }
 
-    // Fetch assigned notes details
     let assignedNotes = [];
     if (assignedNoteIds.size > 0) {
       const { data: aNotes } = await supabase
@@ -242,7 +240,6 @@ router.post('/geofence-register', authenticateToken, async (req, res) => {
       assignedNotes = aNotes || [];
     }
 
-    // Combine and deduplicate
     const allNotes = [...assignedNotes, ...(myNotes || [])];
     const uniqueNotes = allNotes.filter((note, index, self) =>
       note.latitude && note.longitude && note.perimeter_feet &&
@@ -261,7 +258,6 @@ router.post('/geofence-register', authenticateToken, async (req, res) => {
   }
 });
 
-// New endpoint: called when native OS geofence triggers an ENTER event
 router.post('/geofence-enter', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -273,7 +269,6 @@ router.post('/geofence-enter', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'noteId is required' });
     }
 
-    // Fetch the place note
     const { data: note } = await supabase
       .from('place_notes')
       .select('id, name, creator_id, latitude, longitude')
@@ -285,7 +280,7 @@ router.post('/geofence-enter', authenticateToken, async (req, res) => {
       return res.json({ notified: false, message: 'Note not found or inactive' });
     }
 
-    // Clean up old notifications (older than 4 hours) using notified_at
+    // Clean up old notifications older than 4 hours
     try {
       await supabase
         .from('geofence_notifications')
@@ -307,7 +302,6 @@ router.post('/geofence-enter', authenticateToken, async (req, res) => {
       return res.json({ notified: false, message: 'Already notified recently' });
     }
 
-    // Get user's push token and notification prefs
     const { data: user } = await supabase
       .from('users')
       .select('push_token, notification_prefs')
@@ -324,11 +318,9 @@ router.post('/geofence-enter', authenticateToken, async (req, res) => {
       return res.json({ notified: false, message: 'Geofence notifications disabled' });
     }
 
-    // Determine screen: creator goes to home, assigned users go to assigned-notes
     const isCreator = note.creator_id === userId;
     const screen = isCreator ? 'home' : 'assigned-notes';
 
-    // Send push notification
     await sendPushNotification(
       user.push_token,
       '📍 You arrived at a Place Note!',
@@ -336,7 +328,6 @@ router.post('/geofence-enter', authenticateToken, async (req, res) => {
       { screen: screen, noteId: note.id }
     );
 
-    // Record the notification
     await supabase
       .from('geofence_notifications')
       .insert({
