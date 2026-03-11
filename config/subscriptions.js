@@ -71,10 +71,12 @@ async function getUserSubscriptionInfo(userId) {
     const tierKey = TIER_ALIASES[user.subscription_tier?.toLowerCase()] || user.subscription_tier;
     const tier = SUBSCRIPTION_TIERS[tierKey] || SUBSCRIPTION_TIERS['The Viewer'];
 
+    // ✅ FIX: Only count ACTIVE notes created by this user
     const { count: notesCount } = await supabase
       .from('place_notes')
       .select('*', { count: 'exact', head: true })
-      .eq('creator_id', userId);
+      .eq('creator_id', userId)
+      .eq('status', 'active');
 
     // Only count ACTIVE contacts
     const { count: contactsCount } = await supabase
@@ -173,6 +175,11 @@ async function checkSubscriptionLimit(userId, resourceType) {
       .from(tableName)
       .select('*', { count: 'exact', head: true })
       .eq(column, userId);
+
+    // ✅ FIX: Only count ACTIVE notes toward the limit
+    if (resourceType === 'notes') {
+      query = query.eq('status', 'active');
+    }
 
     // Only count active contacts toward the limit
     if (resourceType === 'contacts') {
