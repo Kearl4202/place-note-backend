@@ -44,7 +44,7 @@ const SUBSCRIPTION_TIERS = {
     features: ['Everything in Inspector', 'Unlimited projects', 'Priority support'],
     limits: {
       notes: 50,
-      contacts: 250,
+      contacts: 50,  // ✅ Base limit — contact packs add on top of this
       groups: 10,
       projects: 10
     }
@@ -54,9 +54,10 @@ const SUBSCRIPTION_TIERS = {
 // Get user's subscription info with usage stats
 async function getUserSubscriptionInfo(userId) {
   try {
+    // ✅ Also fetch contact_pack_count for dynamic Chief contact limit
     const { data: user, error: userError } = await supabase
       .from('users')
-      .select('subscription_tier, email, name')
+      .select('subscription_tier, email, name, contact_pack_count')
       .eq('id', userId)
       .single();
 
@@ -71,7 +72,18 @@ async function getUserSubscriptionInfo(userId) {
     const tierKey = TIER_ALIASES[user.subscription_tier?.toLowerCase()] || user.subscription_tier;
     const tier = SUBSCRIPTION_TIERS[tierKey] || SUBSCRIPTION_TIERS['The Viewer'];
 
-    // ✅ FIX: Only count ACTIVE notes created by this user
+    // ✅ Dynamic contact limit: base + contact_pack_count (Chief only)
+    const contactPackCount = user.contact_pack_count || 0;
+    const dynamicContactLimit = tierKey === 'The Chief'
+      ? tier.limits.contacts + contactPackCount
+      : tier.limits.contacts;
+
+    const dynamicLimits = {
+      ...tier.limits,
+      contacts: dynamicContactLimit,
+    };
+
+    // ✅ Only count ACTIVE notes created by this user
     const { count: notesCount } = await supabase
       .from('place_notes')
       .select('*', { count: 'exact', head: true })
@@ -102,7 +114,7 @@ async function getUserSubscriptionInfo(userId) {
         name: user.name
       },
       tier: tier,
-      limits: tier.limits,
+      limits: dynamicLimits,
       usage: {
         notes: notesCount || 0,
         contacts: contactsCount || 0,
@@ -126,9 +138,10 @@ async function getUserSubscriptionInfo(userId) {
 // Check if user can create more of a resource type
 async function checkSubscriptionLimit(userId, resourceType) {
   try {
+    // ✅ Also fetch contact_pack_count for dynamic Chief contact limit
     const { data: user, error } = await supabase
       .from('users')
-      .select('subscription_tier')
+      .select('subscription_tier, contact_pack_count')
       .eq('id', userId)
       .single();
 
@@ -142,7 +155,12 @@ async function checkSubscriptionLimit(userId, resourceType) {
     };
     const tierKey = TIER_ALIASES[user.subscription_tier?.toLowerCase()] || user.subscription_tier;
     const tier = SUBSCRIPTION_TIERS[tierKey] || SUBSCRIPTION_TIERS['The Viewer'];
-    const limit = tier.limits[resourceType];
+    let limit = tier.limits[resourceType];
+
+    // ✅ Dynamic contact limit for Chief: base 50 + contact_pack_count
+    if (resourceType === 'contacts' && tierKey === 'The Chief') {
+      limit = tier.limits.contacts + (user.contact_pack_count || 0);
+    }
 
     let tableName;
     switch(resourceType) {
@@ -176,7 +194,7 @@ async function checkSubscriptionLimit(userId, resourceType) {
       .select('*', { count: 'exact', head: true })
       .eq(column, userId);
 
-    // ✅ FIX: Only count ACTIVE notes toward the limit
+    // Only count ACTIVE notes toward the limit
     if (resourceType === 'notes') {
       query = query.eq('status', 'active');
     }
