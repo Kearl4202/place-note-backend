@@ -16,7 +16,6 @@ const groupRoutes = require('./routes/groups');
 const projectRoutes = require('./routes/projects');
 const chatRoutes = require('./routes/chat');
 const { startCronJobs } = require('./config/cron');
-
 app.use('/api/auth', authRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/place-notes', placeNoteRoutes);
@@ -27,11 +26,13 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/location', locationRoutes);
 app.use('/api/note-activity', noteActivityRoutes);
 app.use('/api/reports', reportRoutes);
-
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'Place Note API is running' });
 });
-
+app.get('/app-ads.txt', (req, res) => {
+  res.type('text/plain');
+  res.send('google.com, pub-9932191100331429, DIRECT, f08c47fec0942fa0');
+});
 app.listen(PORT, () => {
   console.log('Server running on port ' + PORT);
   console.log('Place Note Backend API');
