@@ -1,4 +1,4 @@
-const { supabase } = require('./database');
+const { supabase } = require('../config/database');
 
 const SUBSCRIPTION_TIERS = {
   'The Viewer': {
