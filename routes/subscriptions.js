@@ -37,7 +37,8 @@ router.get('/info', authenticateToken, async (req, res) => {
 // RevenueCat webhook — called when subscription changes
 router.post('/revenuecat', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
-    const body = JSON.parse(req.body);
+    // ✅ FIX: Convert Buffer to string before parsing
+    const body = JSON.parse(req.body.toString());
     const event = body.event;
 
     if (!event) return res.status(400).json({ error: 'No event in body' });
