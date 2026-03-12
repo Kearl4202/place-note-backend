@@ -6,12 +6,14 @@ const { getUserSubscriptionInfo } = require('../config/subscriptions');
 
 // Map RevenueCat product IDs to subscription tiers
 const PRODUCT_TIER_MAP = {
+  // Monthly products
   'notifier_sub:notifier-monthly': 'notifier',
-  'notifier_sub:notifier-yearly': 'notifier',
   'inspector_sub:inspector-monthly': 'inspector',
-  'inspector_sub:inspector-yearly': 'inspector',
   'chief_sub:chief-monthly': 'chief',
-  'chief_sub:chief-yearly': 'chief',
+  // Yearly products — actual RevenueCat product IDs
+  'notifier_yearly:notifier-yearly': 'notifier',
+  'inspector_yearly:inspector-yearly': 'inspector',
+  'chief_yearly:chief-yearly': 'chief',
 };
 
 const CONTACT_PACK_MAP = {
