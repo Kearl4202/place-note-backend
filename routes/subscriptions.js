@@ -105,7 +105,7 @@ router.post('/revenuecat', express.raw({ type: 'application/json' }), async (req
         .update({
           subscription_tier: 'viewer',
           subscription_expires_at: null,
-          contact_pack_count: 0,
+          // contact_pack_count is NOT reset — packs are one-time purchases and never expire
         })
         .eq('id', app_user_id);
 
