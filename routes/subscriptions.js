@@ -81,11 +81,21 @@ router.post('/revenuecat', express.raw({ type: 'application/json' }), async (req
 
       const contactCount = CONTACT_PACK_MAP[product_id];
       if (contactCount) {
+        // Fetch current pack count and add to it (stacking)
+        const { data: userRow } = await supabase
+          .from('users')
+          .select('contact_pack_count')
+          .eq('id', app_user_id)
+          .single();
+        
+        const currentPackCount = userRow?.contact_pack_count || 0;
+        const newPackCount = Math.min(currentPackCount + contactCount, 250);
+        
         await supabase
           .from('users')
-          .update({ contact_pack_count: contactCount })
+          .update({ contact_pack_count: newPackCount })
           .eq('id', app_user_id);
-        console.log('💳 Contact pack updated for user', app_user_id, ':', contactCount);
+        console.log('💳 Contact pack updated for user', app_user_id, ':', currentPackCount, '+', contactCount, '=', newPackCount);
       }
     }
 
@@ -153,7 +163,7 @@ router.post('/contact-pack', authenticateToken, async (req, res) => {
 
     const { data: userRow, error: fetchError } = await supabase
       .from('users')
-      .select('subscription_tier')
+      .select('subscription_tier, contact_pack_count')
       .eq('id', userId)
       .single();
 
@@ -163,15 +173,27 @@ router.post('/contact-pack', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Contact packs are only available on The Chief plan' });
     }
 
+    const currentPackCount = userRow.contact_pack_count || 0;
+    const newPackCount = currentPackCount + Number(contactCount);
+
+    // Cap at 250 pack count (50 base + 250 pack = 300 total max)
+    if (newPackCount > 250) {
+      return res.status(400).json({ 
+        error: `This pack would exceed the maximum of 300 contacts. You currently have ${50 + currentPackCount} contacts (${currentPackCount} from packs). Maximum pack total is 250.`,
+        currentPackCount,
+        maxPackCount: 250
+      });
+    }
+
     const { error: updateError } = await supabase
       .from('users')
-      .update({ contact_pack_count: Number(contactCount) })
+      .update({ contact_pack_count: newPackCount })
       .eq('id', userId);
 
     if (updateError) throw updateError;
 
-    console.log('💳 Contact pack updated for user', userId, ':', contactCount);
-    res.json({ success: true, contactCount: Number(contactCount) });
+    console.log('💳 Contact pack updated for user', userId, ':', currentPackCount, '+', contactCount, '=', newPackCount);
+    res.json({ success: true, contactCount: newPackCount });
   } catch (error) {
     console.error('💳 Contact pack error:', error);
     res.status(500).json({ error: 'Failed to update contact pack' });
