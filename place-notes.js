@@ -98,7 +98,7 @@ router.get('/assignments/:noteId', authenticateToken, async (req, res) => {
     const noteId = req.params.noteId;
     const { data, error } = await supabase
       .from('assignments')
-      .select('id, user_id, group_id')
+      .select('id, user_id, group_id, self_assigned')
       .eq('place_note_id', noteId);
     if (error) throw error;
 
@@ -161,6 +161,35 @@ router.get('/:id/snapshot', authenticateToken, async (req, res) => {
     res.json({ snapshot: data || [] });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch snapshot' });
+  }
+});
+
+// Update name and description of a place note
+router.put('/:id', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const noteId = req.params.id;
+    const { name, description } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+
+    const { data, error } = await supabase
+      .from('place_notes')
+      .update({ name: name.trim(), description: description?.trim() || '' })
+      .eq('id', noteId)
+      .eq('creator_id', userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Note not found or unauthorized' });
+
+    res.json({ message: 'Note updated successfully', placeNote: data });
+  } catch (error) {
+    console.error('Error updating place note:', error);
+    res.status(500).json({ error: 'Failed to update place note' });
   }
 });
 
@@ -276,7 +305,7 @@ router.put('/:id/assignments', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const noteId = req.params.id;
-    const { contact_ids, group_ids } = req.body;
+    const { contact_ids, group_ids, self_assigned } = req.body;
 
     const { data: note, error: noteError } = await supabase
       .from('place_notes')
@@ -307,6 +336,15 @@ router.put('/:id/assignments', authenticateToken, async (req, res) => {
         group_id: groupId,
       }));
       await supabase.from('assignments').insert(groupAssignments);
+    }
+
+    if (self_assigned) {
+      await supabase.from('assignments').insert({
+        place_note_id: noteId,
+        user_id: userId,
+        group_id: null,
+        self_assigned: true,
+      });
     }
 
     res.json({ message: 'Assignments updated successfully' });
