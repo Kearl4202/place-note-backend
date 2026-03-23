@@ -134,7 +134,6 @@ router.post('/', authenticateToken, async (req, res) => {
       );
     }
 
-    // Self-assign: creator assigns themselves for geofence notifications
     if (self_assigned) {
       await supabase.from('assignments').insert({
         place_note_id: data.id,
@@ -298,6 +297,35 @@ router.get('/:id/snapshot', authenticateToken, async (req, res) => {
   }
 });
 
+// ✅ NEW: Update name and description of a place note
+router.put('/:id', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const noteId = req.params.id;
+    const { name, description } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+
+    const { data, error } = await supabase
+      .from('place_notes')
+      .update({ name: name.trim(), description: description?.trim() || '' })
+      .eq('id', noteId)
+      .eq('creator_id', userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Note not found or unauthorized' });
+
+    res.json({ message: 'Note updated successfully', placeNote: data });
+  } catch (error) {
+    console.error('Error updating place note:', error);
+    res.status(500).json({ error: 'Failed to update place note' });
+  }
+});
+
 router.put('/:id/archive', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -387,7 +415,6 @@ router.put('/:id/restore', authenticateToken, async (req, res) => {
       .single();
     if (error) throw error;
 
-    // Notify assigned users that the note was restored
     const { data: creator } = await supabase.from('users').select('name').eq('id', userId).single();
     await notifyAssignedUsers(noteId, data.name, userId,
       'Place Note Restored!',
@@ -438,7 +465,6 @@ router.put('/:id/assignments', authenticateToken, async (req, res) => {
 
     await supabase.from('assignments').delete().eq('place_note_id', noteId);
 
-    // Self-assign: creator assigns themselves
     if (self_assigned) {
       await supabase.from('assignments').insert({
         place_note_id: noteId,
