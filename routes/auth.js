@@ -77,6 +77,11 @@ router.post('/register', async function(req, res) {
       return res.status(400).json({ error: userError.message });
     }
 
+    // Auto-create Personal project for every new user
+    await supabase
+      .from('projects')
+      .insert([{ owner_id: newUser.id, name: 'Personal' }]);
+
     await sendEmail(normalizedEmail, 'Verify your Place Note account',
       'Welcome to Place Note!\n\nYour verification code is: ' + verificationCode + '\n\nThis code expires in 24 hours.');
 
