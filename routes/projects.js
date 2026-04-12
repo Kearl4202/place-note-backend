@@ -14,7 +14,30 @@ router.get('/', authenticateToken, async (req, res) => {
       .eq('owner_id', userId)
       .order('created_at', { ascending: false });
     if (error) throw error;
-    res.json({ projects: data || [] });
+
+    let projectsList = data || [];
+
+    // Safety net: if no Personal project exists, create one automatically
+    const hasPersonal = projectsList.some(p => p.name.toLowerCase() === 'personal');
+    if (!hasPersonal) {
+      const { data: personalProject, error: createError } = await supabase
+        .from('projects')
+        .insert([{ owner_id: userId, name: 'Personal' }])
+        .select()
+        .single();
+      if (!createError && personalProject) {
+        projectsList = [...projectsList, personalProject];
+      }
+    }
+
+    // Always sort Personal to the end so it appears last in the list
+    projectsList.sort((a, b) => {
+      if (a.name.toLowerCase() === 'personal') return 1;
+      if (b.name.toLowerCase() === 'personal') return -1;
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+
+    res.json({ projects: projectsList });
   } catch (error) {
     console.error('Error fetching projects:', error);
     res.status(500).json({ error: 'Failed to fetch projects' });
