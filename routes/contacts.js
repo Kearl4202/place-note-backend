@@ -33,9 +33,13 @@ const getActiveContactCount = async (userId) => {
 const getTierLimits = (tierName) => {
   const limits = {
     'The Viewer': { active: 5, roster: 10 },
+    'viewer': { active: 5, roster: 10 },
     'The Notifier': { active: 20, roster: 40 },
+    'notifier': { active: 20, roster: 40 },
     'The Inspector': { active: 50, roster: null },
+    'inspector': { active: 50, roster: null },
     'The Chief': { active: null, roster: null },
+    'chief': { active: null, roster: null },
   };
   return limits[tierName] || { active: 5, roster: 10 };
 };
