@@ -19,6 +19,27 @@ const sendPushNotification = async (pushToken, title, body, data = {}) => {
   }
 };
 
+// Helper to get active contact count for a user
+const getActiveContactCount = async (userId) => {
+  const { count } = await supabase
+    .from('contacts')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('status', 'active');
+  return count || 0;
+};
+
+// Helper to get tier contact limits
+const getTierLimits = (tierName) => {
+  const limits = {
+    'The Viewer': { active: 5, roster: 10 },
+    'The Notifier': { active: 20, roster: 40 },
+    'The Inspector': { active: 50, roster: null },
+    'The Chief': { active: null, roster: null },
+  };
+  return limits[tierName] || { active: 5, roster: 10 };
+};
+
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -34,7 +55,6 @@ router.get('/', authenticateToken, async (req, res) => {
           .from('contact_groups')
           .select('group_id')
           .eq('contact_id', contact.id);
-        // Fetch latest user info if contact has a linked user
         var latestInfo = {};
         if (contact.contact_user_id) {
           const { data: linkedUser } = await supabase
@@ -88,6 +108,7 @@ router.get('/requests', authenticateToken, async (req, res) => {
           requester_name: requester?.name || 'Unknown',
           requester_email: requester?.email || '',
           requester_phone: requester?.phone || '',
+          pre_accepted: request.pre_accepted || false,
           created_at: request.created_at,
         };
       })
@@ -130,18 +151,21 @@ router.get('/search', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
-    const { name, email, phone, contact_user_id } = req.body;
+    const { name, email, phone, contact_user_id, pre_accepted } = req.body;
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Contact name is required' });
     }
+
+    // Check roster limit (total contacts including inactive)
     const limitCheck = await checkSubscriptionLimit(userId, 'contacts');
     if (!limitCheck.allowed) {
       return res.status(403).json({
-        error: `You've reached your limit of ${limitCheck.limit} contacts. Upgrade to add more!`,
+        error: `Contact list is full. Upgrade to add more!`,
         limit: limitCheck.limit,
         current: limitCheck.current
       });
     }
+
     const { data, error } = await supabase
       .from('contacts')
       .insert([{
@@ -151,6 +175,7 @@ router.post('/', authenticateToken, async (req, res) => {
         phone: phone ? phone.trim() : null,
         contact_user_id: contact_user_id || null,
         status: contact_user_id ? 'invited' : 'active',
+        pre_accepted: pre_accepted || false,
       }])
       .select()
       .single();
@@ -172,10 +197,13 @@ router.post('/', authenticateToken, async (req, res) => {
       if (addedUser?.push_token) {
         var prefs = addedUser.notification_prefs || { geofence: true, tags: true, contacts: true };
         if (prefs.contacts !== false) {
+          const notifBody = pre_accepted
+            ? `${requestingUser.name} wants to add you as a contact and has already accepted your request!`
+            : `${requestingUser.name} wants to add you as a contact`;
           await sendPushNotification(
             addedUser.push_token,
             'New Contact Request',
-            `${requestingUser.name} wants to add you as a contact`,
+            notifBody,
             { screen: 'contacts' }
           );
         }
@@ -186,6 +214,67 @@ router.post('/', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error creating contact:', error);
     res.status(500).json({ error: 'Failed to create contact' });
+  }
+});
+
+// Toggle contact active/inactive status
+router.put('/:id/toggle-status', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const contactId = req.params.id;
+
+    // Fetch the contact
+    const { data: contact, error: fetchError } = await supabase
+      .from('contacts')
+      .select('*')
+      .eq('id', contactId)
+      .eq('user_id', userId)
+      .single();
+
+    if (fetchError || !contact) {
+      return res.status(404).json({ error: 'Contact not found' });
+    }
+
+    // Only active contacts can be toggled (not pending/invited)
+    if (contact.status === 'invited') {
+      return res.status(400).json({ error: 'Cannot toggle status of a pending contact' });
+    }
+
+    const newStatus = contact.status === 'active' ? 'inactive' : 'active';
+
+    // If activating, check active contact limit
+    if (newStatus === 'active') {
+      const { data: userInfo } = await supabase
+        .from('users')
+        .select('subscription_tier')
+        .eq('id', userId)
+        .single();
+
+      const tierName = userInfo?.subscription_tier || 'The Viewer';
+      const limits = getTierLimits(tierName);
+
+      if (limits.active !== null) {
+        const activeCount = await getActiveContactCount(userId);
+        if (activeCount >= limits.active) {
+          return res.status(403).json({
+            error: `You can only have ${limits.active} active contacts on your current plan. Deactivate another contact or upgrade.`,
+          });
+        }
+      }
+    }
+
+    const { error: updateError } = await supabase
+      .from('contacts')
+      .update({ status: newStatus })
+      .eq('id', contactId)
+      .eq('user_id', userId);
+
+    if (updateError) throw updateError;
+
+    res.json({ message: `Contact ${newStatus}`, status: newStatus });
+  } catch (error) {
+    console.error('Error toggling contact status:', error);
+    res.status(500).json({ error: 'Failed to update contact status' });
   }
 });
 
@@ -206,6 +295,7 @@ router.put('/:id/accept', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Contact request not found' });
     }
 
+    // Update the original request to active
     const { error: updateError } = await supabase
       .from('contacts')
       .update({ status: 'active' })
@@ -213,6 +303,36 @@ router.put('/:id/accept', authenticateToken, async (req, res) => {
 
     if (updateError) throw updateError;
 
+    // If pre_accepted, auto-create the reverse contact so both sides are connected
+    if (contact.pre_accepted) {
+      const { data: requesterInfo } = await supabase
+        .from('users')
+        .select('name, email, phone')
+        .eq('id', contact.user_id)
+        .single();
+
+      // Check if reverse contact already exists
+      const { data: existingReverse } = await supabase
+        .from('contacts')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('contact_user_id', contact.user_id)
+        .single();
+
+      if (!existingReverse && requesterInfo) {
+        await supabase.from('contacts').insert([{
+          user_id: userId,
+          name: requesterInfo.name,
+          email: requesterInfo.email,
+          phone: requesterInfo.phone,
+          contact_user_id: contact.user_id,
+          status: 'active',
+          pre_accepted: false,
+        }]);
+      }
+    }
+
+    // Notify the requester their request was accepted
     const { data: requesterUser } = await supabase
       .from('users')
       .select('push_token, notification_prefs')
