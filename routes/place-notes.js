@@ -297,7 +297,6 @@ router.get('/:id/snapshot', authenticateToken, async (req, res) => {
   }
 });
 
-// ✅ NEW: Update name and description of a place note
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -414,6 +413,27 @@ router.put('/:id/restore', authenticateToken, async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+
+    // Remove any inactive contacts from direct assignments on this restored note
+    const { data: directAssignments } = await supabase
+      .from('assignments')
+      .select('id, user_id')
+      .eq('place_note_id', noteId)
+      .not('user_id', 'is', null);
+
+    for (const assignment of directAssignments || []) {
+      const { data: contact } = await supabase
+        .from('contacts')
+        .select('status')
+        .eq('id', assignment.user_id)
+        .single();
+      if (contact && contact.status === 'inactive') {
+        await supabase
+          .from('assignments')
+          .delete()
+          .eq('id', assignment.id);
+      }
+    }
 
     const { data: creator } = await supabase.from('users').select('name').eq('id', userId).single();
     await notifyAssignedUsers(noteId, data.name, userId,
