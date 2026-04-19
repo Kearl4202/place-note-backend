@@ -160,7 +160,6 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Contact name is required' });
     }
 
-    // Check roster limit (total contacts including inactive)
     const limitCheck = await checkSubscriptionLimit(userId, 'contacts');
     if (!limitCheck.allowed) {
       return res.status(403).json({
@@ -227,7 +226,6 @@ router.put('/:id/toggle-status', authenticateToken, async (req, res) => {
     const userId = req.user.userId;
     const contactId = req.params.id;
 
-    // Fetch the contact
     const { data: contact, error: fetchError } = await supabase
       .from('contacts')
       .select('*')
@@ -239,7 +237,6 @@ router.put('/:id/toggle-status', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Contact not found' });
     }
 
-    // Only active contacts can be toggled (not pending/invited)
     if (contact.status === 'invited') {
       return res.status(400).json({ error: 'Cannot toggle status of a pending contact' });
     }
@@ -267,6 +264,7 @@ router.put('/:id/toggle-status', authenticateToken, async (req, res) => {
       }
     }
 
+    // Update the contact status
     const { error: updateError } = await supabase
       .from('contacts')
       .update({ status: newStatus })
@@ -274,6 +272,27 @@ router.put('/:id/toggle-status', authenticateToken, async (req, res) => {
       .eq('user_id', userId);
 
     if (updateError) throw updateError;
+
+    // If going inactive — remove from all direct assignments on active place notes
+    if (newStatus === 'inactive') {
+      // Get all active place notes owned by this user
+      const { data: activeNotes } = await supabase
+        .from('place_notes')
+        .select('id')
+        .eq('creator_id', userId)
+        .eq('status', 'active');
+
+      const activeNoteIds = (activeNotes || []).map(n => n.id);
+
+      if (activeNoteIds.length > 0) {
+        // Remove this contact from direct assignments on active notes only
+        await supabase
+          .from('assignments')
+          .delete()
+          .eq('user_id', contactId)
+          .in('place_note_id', activeNoteIds);
+      }
+    }
 
     res.json({ message: `Contact ${newStatus}`, status: newStatus });
   } catch (error) {
@@ -299,7 +318,6 @@ router.put('/:id/accept', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Contact request not found' });
     }
 
-    // Update the original request to active
     const { error: updateError } = await supabase
       .from('contacts')
       .update({ status: 'active' })
@@ -307,7 +325,6 @@ router.put('/:id/accept', authenticateToken, async (req, res) => {
 
     if (updateError) throw updateError;
 
-    // If pre_accepted, auto-create the reverse contact so both sides are connected
     if (contact.pre_accepted) {
       const { data: requesterInfo } = await supabase
         .from('users')
@@ -315,7 +332,6 @@ router.put('/:id/accept', authenticateToken, async (req, res) => {
         .eq('id', contact.user_id)
         .single();
 
-      // Check if reverse contact already exists
       const { data: existingReverse } = await supabase
         .from('contacts')
         .select('id')
@@ -336,7 +352,6 @@ router.put('/:id/accept', authenticateToken, async (req, res) => {
       }
     }
 
-    // Notify the requester their request was accepted
     const { data: requesterUser } = await supabase
       .from('users')
       .select('push_token, notification_prefs')
