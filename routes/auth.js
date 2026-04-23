@@ -493,16 +493,16 @@ router.put('/change-email', authenticateToken, async function(req, res) {
 router.get('/notification-prefs', authenticateToken, async function(req, res) {
   try {
     var { data: user } = await supabase.from('users').select('notification_prefs').eq('id', req.user.userId).single();
-    res.json({ prefs: user?.notification_prefs || { geofence: true, tags: true, contacts: true } });
+    res.json({ prefs: user?.notification_prefs || { geofence: true, tags: true, contacts: true, business_deals: false } });
   } catch (error) {
-    res.json({ prefs: { geofence: true, tags: true, contacts: true } });
+    res.json({ prefs: { geofence: true, tags: true, contacts: true, business_deals: false } });
   }
 });
 
 // Update notification preferences
 router.put('/notification-prefs', authenticateToken, async function(req, res) {
   try {
-    var prefs = { geofence: req.body.geofence !== false, tags: req.body.tags !== false, contacts: req.body.contacts !== false };
+    var prefs = { geofence: req.body.geofence !== false, tags: req.body.tags !== false, contacts: req.body.contacts !== false, business_deals: req.body.business_deals === true };
     await supabase.from('users').update({ notification_prefs: prefs }).eq('id', req.user.userId);
     res.json({ prefs: prefs, message: 'Notification preferences updated' });
   } catch (error) {
