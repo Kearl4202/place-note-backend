@@ -146,7 +146,7 @@ router.post('/check', authenticateToken, async (req, res) => {
         .single();
 
       if (user?.push_token) {
-        var prefs = user.notification_prefs || { geofence: true, tags: true, contacts: true };
+        var prefs = user.notification_prefs || { geofence: true, tags: true, contacts: true, business_deals: false };
         if (prefs.geofence === false) {
           console.log('Skipping geofence notification for', userId, '- geofence notifications disabled');
         } else {
@@ -271,7 +271,7 @@ router.post('/geofence-enter', authenticateToken, async (req, res) => {
 
     const { data: note } = await supabase
       .from('place_notes')
-      .select('id, name, creator_id, latitude, longitude')
+      .select('id, name, creator_id, latitude, longitude, is_sponsored')
       .eq('id', noteId)
       .eq('status', 'active')
       .single();
@@ -313,9 +313,17 @@ router.post('/geofence-enter', authenticateToken, async (req, res) => {
     }
 
     const prefs = user.notification_prefs || {};
+
+    // Check geofence notifications enabled
     if (prefs.geofence === false) {
       console.log('📍 User has geofence notifications disabled, skipping');
       return res.json({ notified: false, message: 'Geofence notifications disabled' });
+    }
+
+    // Check business deals preference for sponsored notes
+    if (note.is_sponsored && prefs.business_deals !== true) {
+      console.log('📍 User has business deals disabled, skipping sponsored note');
+      return res.json({ notified: false, message: 'Business deals notifications disabled' });
     }
 
     const isCreator = note.creator_id === userId;
