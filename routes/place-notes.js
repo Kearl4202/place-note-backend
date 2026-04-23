@@ -301,15 +301,20 @@ router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const noteId = req.params.id;
-    const { name, description } = req.body;
+    const { name, description, perimeter_feet } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Name is required' });
     }
 
+    const updateData = { name: name.trim(), description: description?.trim() || '' };
+    if (perimeter_feet && !isNaN(perimeter_feet)) {
+      updateData.perimeter_feet = parseInt(perimeter_feet);
+    }
+
     const { data, error } = await supabase
       .from('place_notes')
-      .update({ name: name.trim(), description: description?.trim() || '' })
+      .update(updateData)
       .eq('id', noteId)
       .eq('creator_id', userId)
       .select()
