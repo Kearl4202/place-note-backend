@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const { supabase } = require('../config/database');
 
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -13,6 +14,16 @@ function authenticateToken(req, res, next) {
       return res.status(403).json({ error: 'Invalid or expired token' });
     }
     req.user = user;
+
+    // Fire-and-forget: update last_seen without blocking the request.
+    // If this fails (e.g., DB hiccup), we don't care — the request still succeeds.
+    supabase
+      .from('users')
+      .update({ last_seen: new Date().toISOString() })
+      .eq('id', user.userId)
+      .then(() => {})
+      .catch(() => {});
+
     next();
   });
 }
