@@ -48,6 +48,16 @@ const getAssignedUserIds = async (noteId) => {
       }
     }
   }
+
+  // Exclude users who have explicitly left this note
+  const { data: leaves } = await supabase
+    .from('note_leaves')
+    .select('user_id')
+    .eq('place_note_id', noteId);
+  for (const leave of leaves || []) {
+    userIds.delete(leave.user_id);
+  }
+
   return userIds;
 };
 
@@ -206,6 +216,15 @@ router.get('/assigned-to-me', authenticateToken, async (req, res) => {
       for (const a of groupAssignments || []) {
         assignedNoteIds.add(a.place_note_id);
       }
+    }
+
+    // Exclude notes this user has explicitly left
+    const { data: myLeaves } = await supabase
+      .from('note_leaves')
+      .select('place_note_id')
+      .eq('user_id', userId);
+    for (const leave of myLeaves || []) {
+      assignedNoteIds.delete(leave.place_note_id);
     }
 
     if (assignedNoteIds.size === 0) {
@@ -468,6 +487,81 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error deleting note:', error);
     res.status(500).json({ error: 'Failed to delete note' });
+  }
+});
+
+// Leave a place note (for assigned users — not the creator)
+router.delete('/:id/leave', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const noteId = req.params.id;
+
+    // Fetch the note (need name + creator_id for notification)
+    const { data: note, error: noteError } = await supabase
+      .from('place_notes')
+      .select('id, name, creator_id')
+      .eq('id', noteId)
+      .single();
+
+    if (noteError || !note) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+
+    // Safety: creator cannot leave their own note
+    if (note.creator_id === userId) {
+      return res.status(400).json({ error: 'You cannot leave a note you created' });
+    }
+
+    // 1. Remove any direct assignments (find this user's contact rows)
+    const { data: myContactRecords } = await supabase
+      .from('contacts')
+      .select('id')
+      .eq('contact_user_id', userId);
+
+    const myContactIds = (myContactRecords || []).map(c => c.id);
+
+    if (myContactIds.length > 0) {
+      await supabase
+        .from('assignments')
+        .delete()
+        .eq('place_note_id', noteId)
+        .in('user_id', myContactIds);
+    }
+
+    // 2. Record the leave (handles group-based assignments so they stop getting notifications)
+    await supabase
+      .from('note_leaves')
+      .upsert(
+        { place_note_id: noteId, user_id: userId },
+        { onConflict: 'place_note_id,user_id' }
+      );
+
+    // 3. Notify the note creator
+    const { data: leavingUser } = await supabase
+      .from('users')
+      .select('name')
+      .eq('id', userId)
+      .single();
+
+    const { data: creator } = await supabase
+      .from('users')
+      .select('push_token')
+      .eq('id', note.creator_id)
+      .single();
+
+    if (creator?.push_token) {
+      await sendPushNotification(
+        creator.push_token,
+        'Someone Left Your Place Note',
+        `📍 ${leavingUser?.name || 'Someone'} has left your Place Note "${note.name}"`,
+        { screen: 'home', noteId }
+      );
+    }
+
+    res.json({ message: 'Left note successfully' });
+  } catch (error) {
+    console.error('Error leaving note:', error);
+    res.status(500).json({ error: 'Failed to leave note' });
   }
 });
 
