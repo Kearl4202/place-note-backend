@@ -308,6 +308,12 @@ router.post('/login', async function(req, res) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // Update last_seen timestamp on successful login
+    await supabase
+      .from('users')
+      .update({ last_seen: new Date().toISOString() })
+      .eq('id', user.id);
+
     var token = jwt.sign(
       { userId: user.id, email: user.email },
       process.env.JWT_SECRET,
