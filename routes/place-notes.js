@@ -233,13 +233,24 @@ router.get('/assigned-to-me', authenticateToken, async (req, res) => {
 
     const { data: notes, error } = await supabase
       .from('place_notes')
-      .select(`*, users!place_notes_creator_id_fkey (name), projects (name)`)
+      .select(`*, users!place_notes_creator_id_fkey (name, last_seen), projects (name)`)
       .in('id', Array.from(assignedNoteIds))
       .eq('status', 'active')
       .order('created_at', { ascending: false });
 
     if (error) throw error;
-    res.json({ placeNotes: notes || [] });
+
+    // Flag notes where the creator hasn't been active in 30+ days
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    const notesWithFlag = (notes || []).map(note => {
+      const lastSeen = note.users?.last_seen;
+      const isInactive = lastSeen
+        ? (Date.now() - new Date(lastSeen).getTime()) > THIRTY_DAYS_MS
+        : false;
+      return { ...note, creator_inactive: isInactive };
+    });
+
+    res.json({ placeNotes: notesWithFlag });
   } catch (error) {
     console.error('Error fetching assigned notes:', error);
     res.status(500).json({ error: 'Failed to fetch assigned notes' });
