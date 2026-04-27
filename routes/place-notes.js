@@ -639,4 +639,154 @@ router.put('/:id/assignments', authenticateToken, async (req, res) => {
   }
 });
 
+// Auto-archive notes from inactive creators (60+ days)
+// Protected by CRON_SECRET — only Railway cron should call this
+router.post('/admin/auto-archive-inactive', async (req, res) => {
+  // Verify the secret key
+  const authHeader = req.headers['authorization'];
+  const expected = `Bearer ${process.env.CRON_SECRET}`;
+  if (!process.env.CRON_SECRET || authHeader !== expected) {
+    console.warn('Auto-archive endpoint called with invalid auth');
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const SIXTY_DAYS_AGO = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Find all users who have been inactive for 60+ days
+    const { data: inactiveUsers, error: usersError } = await supabase
+      .from('users')
+      .select('id, name')
+      .lt('last_seen', SIXTY_DAYS_AGO);
+
+    if (usersError) throw usersError;
+
+    if (!inactiveUsers || inactiveUsers.length === 0) {
+      console.log('Auto-archive: No inactive users found');
+      return res.json({ message: 'No inactive users found', archived: 0, notifications_sent: 0 });
+    }
+
+    const inactiveUserIds = inactiveUsers.map(u => u.id);
+
+    // Find all their currently active notes
+    const { data: notesToArchive, error: notesError } = await supabase
+      .from('place_notes')
+      .select('id, name, creator_id')
+      .in('creator_id', inactiveUserIds)
+      .eq('status', 'active');
+
+    if (notesError) throw notesError;
+
+    if (!notesToArchive || notesToArchive.length === 0) {
+      console.log(`Auto-archive: ${inactiveUsers.length} inactive users found, but no active notes`);
+      return res.json({ message: 'No notes to archive', archived: 0, notifications_sent: 0 });
+    }
+
+    let archivedCount = 0;
+    let notificationsSent = 0;
+
+    for (const note of notesToArchive) {
+      try {
+        // Get assigned users BEFORE archiving so we can notify them
+        const assignedUserIds = await getAssignedUserIds(note.id);
+
+        // Take a snapshot of assignments (matching manual archive logic)
+        const { data: assignments } = await supabase
+          .from('assignments')
+          .select('user_id, group_id')
+          .eq('place_note_id', note.id);
+
+        const snapshot = [];
+        for (const a of assignments || []) {
+          if (a.user_id) {
+            const { data: contact } = await supabase
+              .from('contacts')
+              .select('name, email, status')
+              .eq('id', a.user_id)
+              .single();
+            if (contact && contact.status === 'active') {
+              snapshot.push({ name: contact.name, email: contact.email, via_group: null });
+            }
+          }
+          if (a.group_id) {
+            const { data: group } = await supabase
+              .from('groups')
+              .select('name')
+              .eq('id', a.group_id)
+              .single();
+            const { data: members } = await supabase
+              .from('contact_groups')
+              .select('contact_id, contacts!inner(name, email, status)')
+              .eq('group_id', a.group_id)
+              .eq('contacts.status', 'active');
+            for (const member of members || []) {
+              snapshot.push({ name: member.contacts.name, email: member.contacts.email, via_group: group?.name || null });
+            }
+          }
+        }
+
+        // Dedupe by email
+        const seen = new Map();
+        for (const person of snapshot) {
+          if (!seen.has(person.email) || person.via_group) {
+            seen.set(person.email, person);
+          }
+        }
+        const deduped = Array.from(seen.values());
+
+        await supabase.from('assignment_snapshots').insert({
+          place_note_id: note.id,
+          contacts: deduped,
+        });
+
+        // Archive the note
+        const { error: archiveError } = await supabase
+          .from('place_notes')
+          .update({ status: 'archived' })
+          .eq('id', note.id);
+
+        if (archiveError) {
+          console.error(`Failed to archive note ${note.id}:`, archiveError);
+          continue;
+        }
+
+        archivedCount++;
+
+        // Notify each assigned user
+        for (const userId of assignedUserIds) {
+          const { data: user } = await supabase
+            .from('users')
+            .select('push_token')
+            .eq('id', userId)
+            .single();
+          if (user?.push_token) {
+            await sendPushNotification(
+              user.push_token,
+              'Place Note Auto-Archived',
+              `📍 "${note.name}" was auto-archived (creator inactive)`,
+              { screen: 'assigned-notes' }
+            );
+            notificationsSent++;
+          }
+        }
+      } catch (noteError) {
+        console.error(`Error processing note ${note.id}:`, noteError);
+        // Keep going with the next note even if one fails
+      }
+    }
+
+    console.log(`Auto-archive complete: ${archivedCount} notes archived, ${notificationsSent} notifications sent`);
+
+    res.json({
+      message: 'Auto-archive complete',
+      inactive_users: inactiveUsers.length,
+      archived: archivedCount,
+      notifications_sent: notificationsSent,
+    });
+  } catch (error) {
+    console.error('Auto-archive error:', error);
+    res.status(500).json({ error: 'Failed to run auto-archive' });
+  }
+});
+
 module.exports = router;
