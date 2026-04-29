@@ -15,6 +15,7 @@ const contactRoutes = require('./routes/contacts');
 const groupRoutes = require('./routes/groups');
 const projectRoutes = require('./routes/projects');
 const chatRoutes = require('./routes/chat');
+const adminAuthRoutes = require('./routes/admin-auth'); // NEW: admin auth route
 const { startCronJobs } = require('./config/cron');
 app.use('/api/auth', authRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
@@ -26,6 +27,7 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/location', locationRoutes);
 app.use('/api/note-activity', noteActivityRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/admin/auth', adminAuthRoutes); // NEW: admin auth endpoints
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'Place Note API is running' });
 });
