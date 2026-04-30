@@ -220,4 +220,32 @@ router.get('/history', authenticateAdmin, async function(req, res) {
   }
 });
 
+// ============================================================
+// DELETE /api/admin/messages/:id
+// Delete a message record from history. The actual push has
+// already been delivered - this only removes the record.
+// ============================================================
+router.delete('/:id', authenticateAdmin, async function(req, res) {
+  try {
+    const messageId = req.params.id;
+
+    if (!messageId) {
+      return res.status(400).json({ error: 'Message ID is required' });
+    }
+
+    const { error } = await supabase
+      .from('admin_messages')
+      .delete()
+      .eq('id', messageId);
+
+    if (error) throw error;
+
+    console.log(`Admin message ${messageId} deleted by ${req.admin.email}`);
+    res.json({ message: 'Record deleted' });
+  } catch (error) {
+    console.error('Delete admin message error:', error);
+    res.status(500).json({ error: 'Failed to delete record' });
+  }
+});
+
 module.exports = router;
