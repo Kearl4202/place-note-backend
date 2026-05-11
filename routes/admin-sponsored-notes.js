@@ -1,6 +1,6 @@
 // =====================================================
 // routes/admin-sponsored-notes.js
-// CRUD for sponsored ads (individual ad campaigns).
+// CRUD for sponsored ads.
 // All endpoints require super_admin role.
 // =====================================================
 
@@ -11,9 +11,19 @@ const { authenticateAdmin, requireSuperAdmin } = require('../middleware/adminAut
 
 router.use(authenticateAdmin, requireSuperAdmin);
 
+// Helper: derive a single "current_status" for an ad from its run list.
+// Priority: active > paused > scheduled > ended > none
+function deriveCurrentStatus(runs) {
+  if (!runs || runs.length === 0) return 'none';
+  if (runs.some(r => r.status === 'active')) return 'active';
+  if (runs.some(r => r.status === 'paused')) return 'paused';
+  if (runs.some(r => r.status === 'scheduled')) return 'scheduled';
+  return 'ended';
+}
+
 // -----------------------------------------------------
 // GET /api/admin/sponsored-notes
-// List all sponsored ads. Optional ?business_id=xxx filter.
+// List all sponsored ads with current_status field.
 // -----------------------------------------------------
 router.get('/', async (req, res) => {
   try {
@@ -23,7 +33,8 @@ router.get('/', async (req, res) => {
       .from('sponsored_notes')
       .select(`
         *,
-        business:sponsored_businesses(id, name)
+        business:sponsored_businesses(id, name),
+        runs:sponsored_note_runs(id, status, start_date, end_date)
       `)
       .order('created_at', { ascending: false });
 
@@ -32,10 +43,17 @@ router.get('/', async (req, res) => {
     }
 
     const { data: ads, error } = await query;
-
     if (error) throw error;
 
-    res.json({ ads: ads || [] });
+    // Add current_status to each ad based on its runs
+    const adsWithStatus = (ads || []).map(ad => {
+      const current_status = deriveCurrentStatus(ad.runs);
+      // Don't send the full runs array in the list response — keep response light
+      const { runs, ...rest } = ad;
+      return { ...rest, current_status };
+    });
+
+    res.json({ ads: adsWithStatus });
   } catch (error) {
     console.error('Error fetching sponsored ads:', error);
     res.status(500).json({ error: 'Failed to fetch ads' });
@@ -44,7 +62,7 @@ router.get('/', async (req, res) => {
 
 // -----------------------------------------------------
 // GET /api/admin/sponsored-notes/:id
-// Get one ad with its run history and basic stats
+// Get one ad with full run history + current_status.
 // -----------------------------------------------------
 router.get('/:id', async (req, res) => {
   try {
@@ -63,7 +81,6 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Sponsored ad not found' });
     }
 
-    // Get all runs for this ad
     const { data: runs, error: runsError } = await supabase
       .from('sponsored_note_runs')
       .select('*')
@@ -72,7 +89,6 @@ router.get('/:id', async (req, res) => {
 
     if (runsError) throw runsError;
 
-    // Total notification + click counts for the lifetime of this ad
     const { count: totalNotifications } = await supabase
       .from('sponsored_notifications')
       .select('id', { count: 'exact', head: true })
@@ -83,8 +99,10 @@ router.get('/:id', async (req, res) => {
       .select('id', { count: 'exact', head: true })
       .eq('sponsored_note_id', id);
 
+    const current_status = deriveCurrentStatus(runs);
+
     res.json({
-      ad,
+      ad: { ...ad, current_status },
       runs: runs || [],
       stats: {
         total_notifications: totalNotifications || 0,
@@ -116,7 +134,6 @@ router.post('/', async (req, res) => {
       business_hours
     } = req.body;
 
-    // Required field validation
     if (!business_id) {
       return res.status(400).json({ error: 'business_id is required' });
     }
@@ -127,7 +144,6 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Latitude and longitude are required' });
     }
 
-    // Verify the business exists
     const { data: business, error: bizError } = await supabase
       .from('sponsored_businesses')
       .select('id')
