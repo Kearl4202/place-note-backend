@@ -21,6 +21,7 @@ const adminBusinessesRoutes = require('./routes/admin-businesses'); // Phase 3: 
 const adminSponsoredNotesRoutes = require('./routes/admin-sponsored-notes'); // Phase 3: sponsored ads
 const adminSponsoredRunsRoutes = require('./routes/admin-sponsored-runs'); // Phase 3: ad campaign runs
 const adminSponsoredStatsRoutes = require('./routes/admin-sponsored-stats'); // Phase 3: ad analytics
+const sponsoredUserRoutes = require('./routes/sponsored-user'); // Phase 3: user-facing sponsored ads
 const { startCronJobs } = require('./config/cron');
 app.use('/api/auth', authRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
@@ -38,6 +39,7 @@ app.use('/api/admin/businesses', adminBusinessesRoutes); // Phase 3: sponsored b
 app.use('/api/admin/sponsored-notes', adminSponsoredNotesRoutes); // Phase 3: sponsored ads
 app.use('/api/admin/sponsored-runs', adminSponsoredRunsRoutes); // Phase 3: ad campaign runs
 app.use('/api/admin/sponsored-stats', adminSponsoredStatsRoutes); // Phase 3: ad analytics
+app.use('/api/sponsored', sponsoredUserRoutes); // Phase 3: user-facing sponsored ads
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'Place Note API is running' });
 });
