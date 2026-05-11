@@ -1,6 +1,6 @@
 // =====================================================
 // routes/admin-sponsored-runs.js
-// Manage ad campaign runs (start, pause, resume, end).
+// Manage ad campaign runs (schedule, pause, resume, end).
 // All endpoints require super_admin role.
 // =====================================================
 
@@ -11,9 +11,24 @@ const { authenticateAdmin, requireSuperAdmin } = require('../middleware/adminAut
 
 router.use(authenticateAdmin, requireSuperAdmin);
 
+// Helper: parse a date string (e.g., "2026-07-15") into UTC midnight
+function parseDateStart(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + 'T00:00:00.000Z');
+  if (isNaN(d.getTime())) return null;
+  return d;
+}
+// Helper: parse a date string into END of that day in UTC (23:59:59)
+function parseDateEnd(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + 'T23:59:59.999Z');
+  if (isNaN(d.getTime())) return null;
+  return d;
+}
+
 // -----------------------------------------------------
 // GET /api/admin/sponsored-runs
-// List all runs. Optional ?sponsored_note_id=xxx filter.
+// List all runs. Optional ?sponsored_note_id=xxx filter and ?status=xxx
 // -----------------------------------------------------
 router.get('/', async (req, res) => {
   try {
@@ -35,7 +50,6 @@ router.get('/', async (req, res) => {
     }
 
     const { data: runs, error } = await query;
-
     if (error) throw error;
 
     res.json({ runs: runs || [] });
@@ -47,7 +61,6 @@ router.get('/', async (req, res) => {
 
 // -----------------------------------------------------
 // GET /api/admin/sponsored-runs/:id
-// Get one run with detailed stats
 // -----------------------------------------------------
 router.get('/:id', async (req, res) => {
   try {
@@ -66,7 +79,6 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Run not found' });
     }
 
-    // Stats for this specific run
     const { count: notificationCount } = await supabase
       .from('sponsored_notifications')
       .select('id', { count: 'exact', head: true })
@@ -93,7 +105,8 @@ router.get('/:id', async (req, res) => {
 
 // -----------------------------------------------------
 // POST /api/admin/sponsored-runs
-// Start a new run for an ad
+// Schedule a new run. start_date AND end_date REQUIRED.
+// Status is 'scheduled' if start is future, 'active' if today/past.
 // -----------------------------------------------------
 router.post('/', async (req, res) => {
   try {
@@ -101,6 +114,22 @@ router.post('/', async (req, res) => {
 
     if (!sponsored_note_id) {
       return res.status(400).json({ error: 'sponsored_note_id is required' });
+    }
+    if (!start_date) {
+      return res.status(400).json({ error: 'start_date is required (YYYY-MM-DD)' });
+    }
+    if (!end_date) {
+      return res.status(400).json({ error: 'end_date is required (YYYY-MM-DD)' });
+    }
+
+    const start = parseDateStart(start_date);
+    const end = parseDateEnd(end_date);
+
+    if (!start || !end) {
+      return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
+    }
+    if (end < start) {
+      return res.status(400).json({ error: 'end_date must be after start_date' });
     }
 
     // Verify ad exists
@@ -114,16 +143,17 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Sponsored ad not found' });
     }
 
-    // Default start_date to now if not provided
-    const runStart = start_date ? new Date(start_date) : new Date();
+    // Decide status: 'scheduled' if start is in future, 'active' if today/past
+    const now = new Date();
+    const status = start > now ? 'scheduled' : 'active';
 
     const { data: run, error } = await supabase
       .from('sponsored_note_runs')
       .insert([{
         sponsored_note_id,
-        start_date: runStart.toISOString(),
-        end_date: end_date ? new Date(end_date).toISOString() : null,
-        status: 'active'
+        start_date: start.toISOString(),
+        end_date: end.toISOString(),
+        status
       }])
       .select()
       .single();
@@ -132,14 +162,79 @@ router.post('/', async (req, res) => {
 
     res.json({ run });
   } catch (error) {
-    console.error('Error starting run:', error);
-    res.status(500).json({ error: 'Failed to start run' });
+    console.error('Error scheduling run:', error);
+    res.status(500).json({ error: 'Failed to schedule run' });
+  }
+});
+
+// -----------------------------------------------------
+// PUT /api/admin/sponsored-runs/:id/edit-dates
+// Update start/end dates on an existing run (only if scheduled or active).
+// -----------------------------------------------------
+router.put('/:id/edit-dates', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { start_date, end_date } = req.body;
+
+    if (!start_date || !end_date) {
+      return res.status(400).json({ error: 'start_date and end_date are required' });
+    }
+
+    const start = parseDateStart(start_date);
+    const end = parseDateEnd(end_date);
+
+    if (!start || !end) {
+      return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
+    }
+    if (end < start) {
+      return res.status(400).json({ error: 'end_date must be after start_date' });
+    }
+
+    // Fetch current to check it's not ended
+    const { data: existing, error: fetchErr } = await supabase
+      .from('sponsored_note_runs')
+      .select('id, status')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !existing) {
+      return res.status(404).json({ error: 'Run not found' });
+    }
+    if (existing.status === 'ended') {
+      return res.status(400).json({ error: 'Cannot edit dates on an ended run' });
+    }
+
+    // Recompute status based on new dates
+    const now = new Date();
+    let newStatus = existing.status;
+    if (existing.status === 'scheduled' && start <= now) {
+      newStatus = 'active';
+    } else if (existing.status === 'active' && start > now) {
+      newStatus = 'scheduled';
+    }
+
+    const { data: run, error } = await supabase
+      .from('sponsored_note_runs')
+      .update({
+        start_date: start.toISOString(),
+        end_date: end.toISOString(),
+        status: newStatus
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json({ run });
+  } catch (error) {
+    console.error('Error editing dates:', error);
+    res.status(500).json({ error: 'Failed to edit dates' });
   }
 });
 
 // -----------------------------------------------------
 // PUT /api/admin/sponsored-runs/:id/pause
-// Pause an active run
 // -----------------------------------------------------
 router.put('/:id/pause', async (req, res) => {
   try {
@@ -149,12 +244,11 @@ router.put('/:id/pause', async (req, res) => {
       .from('sponsored_note_runs')
       .update({ status: 'paused' })
       .eq('id', id)
-      .eq('status', 'active') // Can only pause if currently active
+      .eq('status', 'active')
       .select()
       .single();
 
     if (error) throw error;
-
     if (!run) {
       return res.status(404).json({ error: 'Run not found or not active' });
     }
@@ -168,25 +262,37 @@ router.put('/:id/pause', async (req, res) => {
 
 // -----------------------------------------------------
 // PUT /api/admin/sponsored-runs/:id/resume
-// Resume a paused run
+// Resume a paused run. If end_date has already passed, set to 'ended' instead.
 // -----------------------------------------------------
 router.put('/:id/resume', async (req, res) => {
   try {
     const { id } = req.params;
 
+    const { data: existing, error: fetchErr } = await supabase
+      .from('sponsored_note_runs')
+      .select('id, status, end_date')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !existing) {
+      return res.status(404).json({ error: 'Run not found' });
+    }
+    if (existing.status !== 'paused') {
+      return res.status(400).json({ error: 'Only paused runs can be resumed' });
+    }
+
+    const now = new Date();
+    const endDate = existing.end_date ? new Date(existing.end_date) : null;
+    const newStatus = (endDate && endDate < now) ? 'ended' : 'active';
+
     const { data: run, error } = await supabase
       .from('sponsored_note_runs')
-      .update({ status: 'active' })
+      .update({ status: newStatus })
       .eq('id', id)
-      .eq('status', 'paused') // Can only resume if currently paused
       .select()
       .single();
 
     if (error) throw error;
-
-    if (!run) {
-      return res.status(404).json({ error: 'Run not found or not paused' });
-    }
 
     res.json({ run });
   } catch (error) {
@@ -210,12 +316,11 @@ router.put('/:id/end', async (req, res) => {
         end_date: new Date().toISOString()
       })
       .eq('id', id)
-      .neq('status', 'ended') // Can't re-end an already-ended run
+      .neq('status', 'ended')
       .select()
       .single();
 
     if (error) throw error;
-
     if (!run) {
       return res.status(404).json({ error: 'Run not found or already ended' });
     }
@@ -229,7 +334,6 @@ router.put('/:id/end', async (req, res) => {
 
 // -----------------------------------------------------
 // DELETE /api/admin/sponsored-runs/:id
-// Hard delete a run (cleanup only). Cascades to notifications + clicks.
 // -----------------------------------------------------
 router.delete('/:id', async (req, res) => {
   try {
