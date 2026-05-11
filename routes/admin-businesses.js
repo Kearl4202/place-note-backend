@@ -9,12 +9,36 @@ const router = express.Router();
 const { supabase } = require('../config/database');
 const { authenticateAdmin, requireSuperAdmin } = require('../middleware/adminAuth');
 
-// All routes in this file require super_admin
 router.use(authenticateAdmin, requireSuperAdmin);
+
+// Helper: derive a single "top_status" for a business from all its ads' runs.
+// Priority: active > paused > scheduled > ended > none
+function deriveTopStatus(adsWithRuns) {
+  if (!adsWithRuns || adsWithRuns.length === 0) return 'none';
+
+  let hasActive = false;
+  let hasPaused = false;
+  let hasScheduled = false;
+  let hasEnded = false;
+
+  for (const ad of adsWithRuns) {
+    const runs = ad.runs || [];
+    if (runs.some(r => r.status === 'active')) hasActive = true;
+    else if (runs.some(r => r.status === 'paused')) hasPaused = true;
+    else if (runs.some(r => r.status === 'scheduled')) hasScheduled = true;
+    else if (runs.some(r => r.status === 'ended')) hasEnded = true;
+  }
+
+  if (hasActive) return 'active';
+  if (hasPaused) return 'paused';
+  if (hasScheduled) return 'scheduled';
+  if (hasEnded) return 'ended';
+  return 'none';
+}
 
 // -----------------------------------------------------
 // GET /api/admin/businesses
-// List all sponsored businesses with summary counts
+// List all sponsored businesses with ad count + top status
 // -----------------------------------------------------
 router.get('/', async (req, res) => {
   try {
@@ -25,19 +49,24 @@ router.get('/', async (req, res) => {
 
     if (error) throw error;
 
-    // For each business, count their ads (sponsored_notes)
-    const businessesWithCounts = await Promise.all(
+    // For each business, count their ads and derive top status
+    const businessesWithDetails = await Promise.all(
       (businesses || []).map(async (biz) => {
-        const { count: adCount } = await supabase
+        const { data: ads } = await supabase
           .from('sponsored_notes')
-          .select('id', { count: 'exact', head: true })
+          .select('id, runs:sponsored_note_runs(status)')
           .eq('business_id', biz.id);
 
-        return { ...biz, ad_count: adCount || 0 };
+        const adList = ads || [];
+        return {
+          ...biz,
+          ad_count: adList.length,
+          top_status: deriveTopStatus(adList)
+        };
       })
     );
 
-    res.json({ businesses: businessesWithCounts });
+    res.json({ businesses: businessesWithDetails });
   } catch (error) {
     console.error('Error fetching businesses:', error);
     res.status(500).json({ error: 'Failed to fetch businesses' });
@@ -62,7 +91,6 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Business not found' });
     }
 
-    // Get all ads for this business
     const { data: ads, error: adsError } = await supabase
       .from('sponsored_notes')
       .select('*')
@@ -80,7 +108,6 @@ router.get('/:id', async (req, res) => {
 
 // -----------------------------------------------------
 // POST /api/admin/businesses
-// Create a new sponsored business
 // -----------------------------------------------------
 router.post('/', async (req, res) => {
   try {
@@ -124,7 +151,6 @@ router.post('/', async (req, res) => {
 
 // -----------------------------------------------------
 // PUT /api/admin/businesses/:id
-// Update a sponsored business
 // -----------------------------------------------------
 router.put('/:id', async (req, res) => {
   try {
@@ -152,7 +178,6 @@ router.put('/:id', async (req, res) => {
       notes: notes?.trim() || null
     };
 
-    // Only update total_paid_cents if provided (avoid wiping it on regular edits)
     if (typeof total_paid_cents === 'number') {
       updates.total_paid_cents = total_paid_cents;
     }
@@ -179,14 +204,11 @@ router.put('/:id', async (req, res) => {
 
 // -----------------------------------------------------
 // DELETE /api/admin/businesses/:id
-// Delete a business AND cascade delete all their ads, runs, etc.
-// This is a destructive action. UI must require confirmation.
 // -----------------------------------------------------
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Get counts of what will be deleted (for response/audit)
     const { count: adCount } = await supabase
       .from('sponsored_notes')
       .select('id', { count: 'exact', head: true })
