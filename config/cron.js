@@ -41,12 +41,10 @@ const reEngagementNotification = async () => {
       return;
     }
 
-    // Pick a random message so it doesn't feel repetitive
     const message = messages[Math.floor(Math.random() * messages.length)];
 
     let sent = 0;
     for (const user of users) {
-      // Respect notification preferences
       const prefs = user.notification_prefs || {};
       if (prefs.geofence === false && prefs.tags === false) {
         continue;
@@ -63,6 +61,47 @@ const reEngagementNotification = async () => {
     console.log('🔔 Re-engagement notifications sent to', sent, 'users');
   } catch (error) {
     console.error('🔔 Re-engagement notification failed:', error);
+  }
+};
+
+// =====================================================
+// Phase 3: Auto-schedule sponsored ad runs
+// Every 5 min: activate scheduled runs whose start has passed.
+// Every 5 min: end active/paused runs whose end has passed.
+// =====================================================
+const processSponsoredRunSchedule = async () => {
+  try {
+    const nowIso = new Date().toISOString();
+
+    // 1) Activate scheduled runs whose start_date has passed
+    const { data: toActivate, error: activateErr } = await supabase
+      .from('sponsored_note_runs')
+      .update({ status: 'active' })
+      .eq('status', 'scheduled')
+      .lte('start_date', nowIso)
+      .select('id');
+
+    if (activateErr) {
+      console.error('📍 Failed to activate scheduled runs:', activateErr);
+    } else if (toActivate && toActivate.length > 0) {
+      console.log('📍 Activated', toActivate.length, 'sponsored run(s)');
+    }
+
+    // 2) End runs (active or paused) whose end_date has passed
+    const { data: toEnd, error: endErr } = await supabase
+      .from('sponsored_note_runs')
+      .update({ status: 'ended' })
+      .in('status', ['active', 'paused'])
+      .lte('end_date', nowIso)
+      .select('id');
+
+    if (endErr) {
+      console.error('📍 Failed to end expired runs:', endErr);
+    } else if (toEnd && toEnd.length > 0) {
+      console.log('📍 Ended', toEnd.length, 'expired sponsored run(s)');
+    }
+  } catch (error) {
+    console.error('📍 Sponsored run scheduler failed:', error);
   }
 };
 
@@ -83,7 +122,15 @@ function startCronJobs() {
     await reEngagementNotification();
   });
 
-  console.log('⏰ Cron jobs initialized - archive cleanup daily at 3:00 AM CT, re-engagement every 2 days at 9:00 AM CT');
+  // Phase 3: Process sponsored ad scheduling every 5 minutes
+  cron.schedule('*/5 * * * *', async () => {
+    await processSponsoredRunSchedule();
+  });
+
+  console.log('⏰ Cron jobs initialized:');
+  console.log('   - Archive cleanup daily at 3:00 AM CT');
+  console.log('   - Re-engagement every 2 days at 9:00 AM CT');
+  console.log('   - Sponsored run scheduler every 5 minutes');
 }
 
 module.exports = { startCronJobs };
