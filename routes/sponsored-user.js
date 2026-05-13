@@ -6,11 +6,29 @@
 
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
 const { supabase } = require('../config/database');
 const { authenticateToken } = require('../middleware/auth');
 
 // All routes require user auth
 router.use(authenticateToken);
+
+// Send a push notification via Expo Push API (same pattern as routes/location.js)
+const sendPushNotification = async (pushToken, title, body, data = {}) => {
+  try {
+    await axios.post('https://exp.host/--/api/v2/push/send', {
+      to: pushToken,
+      title,
+      body,
+      sound: 'default',
+      channelId: 'default',
+      priority: 'high',
+      data,
+    });
+  } catch (error) {
+    console.error('🔔 Error sending sponsored push:', error.message);
+  }
+};
 
 // -----------------------------------------------------
 // GET /api/sponsored/active
@@ -34,7 +52,6 @@ router.get('/active', async (req, res) => {
 
     const prefs = user?.notification_prefs || {};
     if (prefs.business_deals !== true) {
-      // User has not opted in to business deals — return empty list
       return res.json({ ads: [], opted_in: false });
     }
 
@@ -73,14 +90,12 @@ router.get('/active', async (req, res) => {
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    // Get notification counts per ad for this user
     const { data: userNotifs } = await supabase
       .from('sponsored_notifications')
       .select('sponsored_note_id, notified_at')
       .eq('user_id', userId)
       .gte('notified_at', sevenDaysAgo);
 
-    // Build per-ad counters
     const todayCounts = {};
     const weekCounts = {};
     for (const notif of (userNotifs || [])) {
@@ -91,7 +106,6 @@ router.get('/active', async (req, res) => {
       }
     }
 
-    // Filter ads by frequency cap and shape response
     const eligible = activeRuns
       .filter(run => {
         if (!run.sponsored_note) return false;
@@ -125,8 +139,8 @@ router.get('/active', async (req, res) => {
 // -----------------------------------------------------
 // POST /api/sponsored/log-notification
 // Body: { sponsored_note_id, run_id }
-// Records that this user was notified about this ad.
-// Used for frequency caps and analytics.
+// Records that this user was notified about this ad,
+// then sends a push notification via Expo Push API.
 // -----------------------------------------------------
 router.post('/log-notification', async (req, res) => {
   try {
@@ -148,7 +162,8 @@ router.post('/log-notification', async (req, res) => {
       return res.status(400).json({ error: 'Run is not active' });
     }
 
-    const { error } = await supabase
+    // Log to DB (analytics + frequency cap tracking)
+    const { error: logErr } = await supabase
       .from('sponsored_notifications')
       .insert([{
         sponsored_note_id,
@@ -156,11 +171,71 @@ router.post('/log-notification', async (req, res) => {
         user_id: userId
       }]);
 
-    if (error) throw error;
+    if (logErr) throw logErr;
+
+    // Fetch the ad details for the push notification content
+    const { data: ad } = await supabase
+      .from('sponsored_notes')
+      .select(`
+        id,
+        name,
+        description,
+        photo_url,
+        latitude,
+        longitude,
+        perimeter_feet,
+        phone,
+        website,
+        business_hours,
+        business:sponsored_businesses(id, name)
+      `)
+      .eq('id', sponsored_note_id)
+      .single();
+
+    // Fetch user's push token and prefs
+    const { data: user } = await supabase
+      .from('users')
+      .select('push_token, notification_prefs')
+      .eq('id', userId)
+      .single();
+
+    const prefs = user?.notification_prefs || {};
+
+    // Only push if user has opted in and has a push_token
+    if (ad && user && user.push_token && prefs.business_deals === true) {
+      const businessName = ad.business ? ad.business.name : null;
+      const adPayload = {
+        sponsored_note_id: ad.id,
+        run_id: run_id,
+        business_name: businessName,
+        name: ad.name,
+        description: ad.description,
+        photo_url: ad.photo_url,
+        latitude: ad.latitude,
+        longitude: ad.longitude,
+        perimeter_feet: ad.perimeter_feet,
+        phone: ad.phone,
+        website: ad.website,
+        business_hours: ad.business_hours,
+      };
+
+      await sendPushNotification(
+        user.push_token,
+        ad.name || 'Nearby Business',
+        'Sponsored Ad from Place Note',
+        {
+          type: 'sponsored_ad',
+          ad: adPayload,
+        }
+      );
+      console.log('🔔 Sponsored push sent for:', ad.name, 'to user:', userId);
+    } else {
+      console.log('🔔 Sponsored push skipped (no push_token, opted out, or ad missing) for user:', userId);
+    }
 
     res.json({ success: true });
   } catch (error) {
-    console.error('Error logging notification:', error);
+    console.error('Error logging sponsored notification:', error);
     res.status(500).json({ error: 'Failed to log notification' });
   }
 });
