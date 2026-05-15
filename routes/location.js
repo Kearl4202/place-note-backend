@@ -280,6 +280,19 @@ router.post('/geofence-enter', authenticateToken, async (req, res) => {
       return res.json({ notified: false, message: 'Note not found or inactive' });
     }
 
+    // Check if this user has muted this specific note
+    const { data: muteRow } = await supabase
+      .from('note_mutes')
+      .select('user_id')
+      .eq('user_id', userId)
+      .eq('place_note_id', noteId)
+      .single();
+
+    if (muteRow) {
+      console.log('📍 User has muted this note, skipping:', note.name);
+      return res.json({ notified: false, message: 'Note muted by user' });
+    }
+
     // Clean up old notifications older than 4 hours
     try {
       await supabase
@@ -349,6 +362,63 @@ router.post('/geofence-enter', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error in geofence-enter:', error);
     res.status(500).json({ error: 'Failed to process geofence enter' });
+  }
+});
+
+// Check whether the current user has muted a specific note
+router.get('/mute-status/:noteId', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { noteId } = req.params;
+
+    const { data: muteRow } = await supabase
+      .from('note_mutes')
+      .select('user_id')
+      .eq('user_id', userId)
+      .eq('place_note_id', noteId)
+      .single();
+
+    return res.json({ muted: !!muteRow });
+  } catch (error) {
+    console.error('Error in mute-status:', error);
+    res.status(500).json({ error: 'Failed to get mute status' });
+  }
+});
+
+// Toggle mute on/off for the current user + a specific note
+router.post('/mute-toggle/:noteId', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { noteId } = req.params;
+
+    // See if a mute row already exists
+    const { data: muteRow } = await supabase
+      .from('note_mutes')
+      .select('user_id')
+      .eq('user_id', userId)
+      .eq('place_note_id', noteId)
+      .single();
+
+    if (muteRow) {
+      // Currently muted -> unmute (delete the row)
+      await supabase
+        .from('note_mutes')
+        .delete()
+        .eq('user_id', userId)
+        .eq('place_note_id', noteId);
+      console.log('📍 User unmuted note:', noteId);
+      return res.json({ muted: false });
+    } else {
+      // Currently not muted -> mute (insert a row)
+      await supabase
+        .from('note_mutes')
+        .insert({ user_id: userId, place_note_id: noteId });
+      console.log('📍 User muted note:', noteId);
+      return res.json({ muted: true });
+    }
+  } catch (error) {
+    console.error('Error in mute-toggle:', error);
+    res.status(500).json({ error: 'Failed to toggle mute' });
   }
 });
 
