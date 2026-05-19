@@ -35,9 +35,10 @@ const sendPushNotification = async (pushToken, title, body, data = {}) => {
 // Returns active sponsored ads the user is eligible to see.
 // Filters out:
 //   - Users who opted out of business_deals notifications
-//   - Ads where this user has already seen 1+ notifications today
-//   - Ads where this user has already seen 2+ notifications in last 7 days
-// Mobile app caches this and does geofence checks locally.
+// NOTE: Frequency caps are NOT applied here. They are applied
+// at notification time in /log-notification. This keeps every
+// sponsored geofence registered on the phone so it always fires
+// on entry; the cap then decides whether a push is actually sent.
 // -----------------------------------------------------
 router.get('/active', async (req, res) => {
   try {
@@ -85,35 +86,11 @@ router.get('/active', async (req, res) => {
       return res.json({ ads: [], opted_in: true });
     }
 
-    // Frequency cap: check this user's notification history
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-
-    const { data: userNotifs } = await supabase
-      .from('sponsored_notifications')
-      .select('sponsored_note_id, notified_at')
-      .eq('user_id', userId)
-      .gte('notified_at', sevenDaysAgo);
-
-    const todayCounts = {};
-    const weekCounts = {};
-    for (const notif of (userNotifs || [])) {
-      const adId = notif.sponsored_note_id;
-      weekCounts[adId] = (weekCounts[adId] || 0) + 1;
-      if (notif.notified_at >= startOfToday) {
-        todayCounts[adId] = (todayCounts[adId] || 0) + 1;
-      }
-    }
-
-    const eligible = activeRuns
-      .filter(run => {
-        if (!run.sponsored_note) return false;
-        const adId = run.sponsored_note.id;
-        if ((todayCounts[adId] || 0) >= 1) return false;
-        if ((weekCounts[adId] || 0) >= 2) return false;
-        return true;
-      })
+    // Return ALL active ads (no frequency cap filtering here).
+    // This ensures the sponsored geofence stays registered on the
+    // phone so it reliably fires the moment the user arrives.
+    const ads = activeRuns
+      .filter(run => !!run.sponsored_note)
       .map(run => ({
         run_id: run.id,
         sponsored_note_id: run.sponsored_note.id,
@@ -129,7 +106,7 @@ router.get('/active', async (req, res) => {
         business_name: run.sponsored_note.business ? run.sponsored_note.business.name : null
       }));
 
-    res.json({ ads: eligible, opted_in: true });
+    res.json({ ads: ads, opted_in: true });
   } catch (error) {
     console.error('Error fetching active sponsored ads:', error);
     res.status(500).json({ error: 'Failed to fetch sponsored ads' });
@@ -139,8 +116,12 @@ router.get('/active', async (req, res) => {
 // -----------------------------------------------------
 // POST /api/sponsored/log-notification
 // Body: { sponsored_note_id, run_id }
-// Records that this user was notified about this ad,
-// then sends a push notification via Expo Push API.
+// Called when a sponsored geofence is entered.
+// Applies the per-ad frequency cap (per user):
+//   - Max 1 push per day for the same ad
+//   - Max 2 pushes per 7 days for the same ad
+// If under the cap: logs the notification + sends the push.
+// If at the cap: sends nothing, logs nothing, returns success.
 // -----------------------------------------------------
 router.post('/log-notification', async (req, res) => {
   try {
@@ -162,16 +143,34 @@ router.post('/log-notification', async (req, res) => {
       return res.status(400).json({ error: 'Run is not active' });
     }
 
-    // Log to DB (analytics + frequency cap tracking)
-    const { error: logErr } = await supabase
-      .from('sponsored_notifications')
-      .insert([{
-        sponsored_note_id,
-        run_id,
-        user_id: userId
-      }]);
+    // ---- Per-ad frequency cap check (per user) ----
+    // Count how many times THIS ad has notified THIS user
+    // today and in the last 7 days.
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    if (logErr) throw logErr;
+    const { data: adNotifs } = await supabase
+      .from('sponsored_notifications')
+      .select('notified_at')
+      .eq('user_id', userId)
+      .eq('sponsored_note_id', sponsored_note_id)
+      .gte('notified_at', sevenDaysAgo);
+
+    let todayCount = 0;
+    let weekCount = 0;
+    for (const notif of (adNotifs || [])) {
+      weekCount += 1;
+      if (notif.notified_at >= startOfToday) {
+        todayCount += 1;
+      }
+    }
+
+    // If the per-ad cap is reached, skip silently (no log, no push).
+    if (todayCount >= 1 || weekCount >= 2) {
+      console.log('🔔 Sponsored push skipped (frequency cap reached) for user:', userId, 'ad:', sponsored_note_id);
+      return res.json({ success: true, capped: true });
+    }
 
     // Fetch the ad details for the push notification content
     const { data: ad } = await supabase
@@ -228,12 +227,25 @@ router.post('/log-notification', async (req, res) => {
           ad: adPayload,
         }
       );
+
+      // Log to DB only when a push is actually sent
+      // (analytics + frequency cap tracking)
+      const { error: logErr } = await supabase
+        .from('sponsored_notifications')
+        .insert([{
+          sponsored_note_id,
+          run_id,
+          user_id: userId
+        }]);
+
+      if (logErr) throw logErr;
+
       console.log('🔔 Sponsored push sent for:', ad.name, 'to user:', userId);
+      return res.json({ success: true, capped: false });
     } else {
       console.log('🔔 Sponsored push skipped (no push_token, opted out, or ad missing) for user:', userId);
+      return res.json({ success: true, capped: false });
     }
-
-    res.json({ success: true });
   } catch (error) {
     console.error('Error logging sponsored notification:', error);
     res.status(500).json({ error: 'Failed to log notification' });
