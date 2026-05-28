@@ -139,8 +139,10 @@ router.get('/active', async (req, res) => {
 // -----------------------------------------------------
 // POST /api/sponsored/log-notification
 // Body: { sponsored_note_id, run_id }
-// Records that this user was notified about this ad,
-// then sends a push notification via Expo Push API.
+// Authoritative gate for sponsored pushes.
+// Enforces frequency cap (≥1 today or ≥2 this week → skip).
+// Only logs to DB and sends push if cap NOT hit.
+// Returns { success: true, pushed: true|false, reason? }.
 // -----------------------------------------------------
 router.post('/log-notification', async (req, res) => {
   try {
@@ -162,7 +164,38 @@ router.post('/log-notification', async (req, res) => {
       return res.status(400).json({ error: 'Run is not active' });
     }
 
-    // Log to DB (analytics + frequency cap tracking)
+    // -----------------------------------------------------
+    // Frequency cap check — server is authoritative.
+    // Mirrors the filter logic in GET /active so both endpoints agree.
+    // ≥1 notification today for this ad → skip
+    // ≥2 notifications this week for this ad → skip
+    // -----------------------------------------------------
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: priorNotifs } = await supabase
+      .from('sponsored_notifications')
+      .select('notified_at')
+      .eq('user_id', userId)
+      .eq('sponsored_note_id', sponsored_note_id)
+      .gte('notified_at', sevenDaysAgo);
+
+    let todayCount = 0;
+    let weekCount = 0;
+    for (const n of (priorNotifs || [])) {
+      weekCount++;
+      if (n.notified_at >= startOfToday) {
+        todayCount++;
+      }
+    }
+
+    if (todayCount >= 1 || weekCount >= 2) {
+      console.log('🔔 Sponsored push SKIPPED (cap hit) for ad:', sponsored_note_id, 'user:', userId, 'today:', todayCount, 'week:', weekCount);
+      return res.json({ success: true, pushed: false, reason: 'cap_hit' });
+    }
+
+    // Cap NOT hit — log to DB (counts toward future cap checks)
     const { error: logErr } = await supabase
       .from('sponsored_notifications')
       .insert([{
@@ -233,7 +266,7 @@ router.post('/log-notification', async (req, res) => {
       console.log('🔔 Sponsored push skipped (no push_token, opted out, or ad missing) for user:', userId);
     }
 
-    res.json({ success: true });
+    res.json({ success: true, pushed: true });
   } catch (error) {
     console.error('Error logging sponsored notification:', error);
     res.status(500).json({ error: 'Failed to log notification' });
@@ -267,7 +300,7 @@ router.post('/log-click', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('Error logging click:', error);
-    res.status(500).json({ error: 'Failed to log click' });
+    res.status(500).json({ error: 'Failed to log notification' });
   }
 });
 
