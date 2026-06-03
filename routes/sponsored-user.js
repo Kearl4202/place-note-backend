@@ -13,6 +13,16 @@ const { authenticateToken } = require('../middleware/auth');
 // All routes require user auth
 router.use(authenticateToken);
 
+// -----------------------------------------------------
+// Frequency cap config.
+// TESTING: 4-hour cooldown per ad per user (lets you re-test more easily).
+// PRODUCTION: change back to daily/weekly caps when going live.
+//   - For production, this constant goes away and the cap logic in BOTH
+//     GET /active and POST /log-notification reverts to:
+//       ≥1 today → skip, ≥2 this week → skip
+// -----------------------------------------------------
+const SPONSORED_COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours
+
 // Send a push notification via Expo Push API (same pattern as routes/location.js)
 const sendPushNotification = async (pushToken, title, body, data = {}) => {
   try {
@@ -35,8 +45,7 @@ const sendPushNotification = async (pushToken, title, body, data = {}) => {
 // Returns active sponsored ads the user is eligible to see.
 // Filters out:
 //   - Users who opted out of business_deals notifications
-//   - Ads where this user has already seen 1+ notifications today
-//   - Ads where this user has already seen 2+ notifications in last 7 days
+//   - Ads where this user has been notified within the cooldown window
 // Mobile app caches this and does geofence checks locally.
 // -----------------------------------------------------
 router.get('/active', async (req, res) => {
@@ -86,32 +95,24 @@ router.get('/active', async (req, res) => {
     }
 
     // Frequency cap: check this user's notification history
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    // TESTING: 4-hour cooldown per ad. Skip ads notified within the cooldown window.
+    const cooldownStart = new Date(Date.now() - SPONSORED_COOLDOWN_MS).toISOString();
 
     const { data: userNotifs } = await supabase
       .from('sponsored_notifications')
-      .select('sponsored_note_id, notified_at')
+      .select('sponsored_note_id')
       .eq('user_id', userId)
-      .gte('notified_at', sevenDaysAgo);
+      .gte('notified_at', cooldownStart);
 
-    const todayCounts = {};
-    const weekCounts = {};
+    const recentlyNotified = new Set();
     for (const notif of (userNotifs || [])) {
-      const adId = notif.sponsored_note_id;
-      weekCounts[adId] = (weekCounts[adId] || 0) + 1;
-      if (notif.notified_at >= startOfToday) {
-        todayCounts[adId] = (todayCounts[adId] || 0) + 1;
-      }
+      recentlyNotified.add(notif.sponsored_note_id);
     }
 
     const eligible = activeRuns
       .filter(run => {
         if (!run.sponsored_note) return false;
-        const adId = run.sponsored_note.id;
-        if ((todayCounts[adId] || 0) >= 1) return false;
-        if ((weekCounts[adId] || 0) >= 2) return false;
+        if (recentlyNotified.has(run.sponsored_note.id)) return false;
         return true;
       })
       .map(run => ({
@@ -140,8 +141,8 @@ router.get('/active', async (req, res) => {
 // POST /api/sponsored/log-notification
 // Body: { sponsored_note_id, run_id }
 // Authoritative gate for sponsored pushes.
-// Enforces frequency cap (≥1 today or ≥2 this week → skip).
-// Only logs to DB and sends push if cap NOT hit.
+// Enforces 4-hour per-ad cooldown (TESTING) — skip if notified recently.
+// Only logs to DB and sends push if cooldown NOT active.
 // Returns { success: true, pushed: true|false, reason? }.
 // -----------------------------------------------------
 router.post('/log-notification', async (req, res) => {
@@ -165,34 +166,22 @@ router.post('/log-notification', async (req, res) => {
     }
 
     // -----------------------------------------------------
-    // Frequency cap check — server is authoritative.
+    // TESTING: 4-hour cooldown per ad per user.
     // Mirrors the filter logic in GET /active so both endpoints agree.
-    // ≥1 notification today for this ad → skip
-    // ≥2 notifications this week for this ad → skip
     // -----------------------------------------------------
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const cooldownStart = new Date(Date.now() - SPONSORED_COOLDOWN_MS).toISOString();
 
     const { data: priorNotifs } = await supabase
       .from('sponsored_notifications')
       .select('notified_at')
       .eq('user_id', userId)
       .eq('sponsored_note_id', sponsored_note_id)
-      .gte('notified_at', sevenDaysAgo);
+      .gte('notified_at', cooldownStart)
+      .limit(1);
 
-    let todayCount = 0;
-    let weekCount = 0;
-    for (const n of (priorNotifs || [])) {
-      weekCount++;
-      if (n.notified_at >= startOfToday) {
-        todayCount++;
-      }
-    }
-
-    if (todayCount >= 1 || weekCount >= 2) {
-      console.log('🔔 Sponsored push SKIPPED (cap hit) for ad:', sponsored_note_id, 'user:', userId, 'today:', todayCount, 'week:', weekCount);
-      return res.json({ success: true, pushed: false, reason: 'cap_hit' });
+    if (priorNotifs && priorNotifs.length > 0) {
+      console.log('🔔 Sponsored push SKIPPED (within 4hr cooldown) for ad:', sponsored_note_id, 'user:', userId);
+      return res.json({ success: true, pushed: false, reason: 'cooldown_active' });
     }
 
     // Cap NOT hit — log to DB (counts toward future cap checks)
